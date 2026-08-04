@@ -78,11 +78,18 @@ them:
 | 0      | `timestamp`                                      | block time fallback       |
 | 8      | `base_amount_out` / `base_amount_in`             | `base_amount`             |
 | 56     | `quote_amount_in` / `quote_amount_out`           | `quote_amount` (pool leg) |
-| 112    | `user_quote_amount_in` / `user_quote_amount_out` | trader cash flow          |
-| 120    | `pool`                                           | `pool_id`                 |
-| 152    | `user`                                           | `wallet`                  |
-| 184    | `user_base_token_account`                        | base mint resolution      |
-| 216    | `user_quote_token_account`                       | quote mint resolution     |
+| 104    | `user_quote_amount_in` / `user_quote_amount_out` | trader cash flow          |
+| 112    | `pool`                                           | `pool_id`                 |
+| 144    | `user`                                           | `wallet`                  |
+| 176    | `user_base_token_account`                        | base mint resolution      |
+| 208    | `user_quote_token_account`                       | quote mint resolution     |
+
+Fourteen numeric fields occupy 0–111, so the first pubkey starts at 112 and the
+four read here are 112 / 144 / 176 / 208. An earlier version of this table
+listed 120 / 152 / 184 / 216 — one numeric field too many — which is both
+internally impossible (216 + 32 plus two unlisted pubkeys exceeds the 304 bytes
+`EVENT_MIN_BYTES` enforces) and worse than no table at all: following it would
+make a correct decoder look eight bytes off and invite someone to "fix" it.
 
 `quote_fee_amount` is derived as the gap between the two quote figures rather
 than by summing the individual fee fields, so it captures every fee the program
@@ -158,10 +165,18 @@ both parsers are exercised in one run.
 If it fails, work in this order:
 
 1. **`exitliquidity_dropped_total`** on `/metrics` — swaps parsed but not
-   written, with a reason label.
-2. **`ingest_skips`** — venue instructions that produced no row. `event_missing`
-   in bulk means an event discriminator is wrong. `pair_unresolved` in bulk
-   means mint resolution is failing.
+   written, with a reason label. Note that `backfill` does not start the metrics
+   server, so this is only available from `stream` and `worker`.
+2. **`ingest_skips`** — venue instructions that produced no row. Read the
+   `detail` column, not just `reason`:
+   - `decode_error` — the decoder threw. The layout no longer matches what the
+     program emits; the detail carries the failing field and offset. Go to 3.
+   - `event_missing` — three different causes, which the detail separates.
+     `node had no children` means the program emitted no self-CPI at all;
+     a child list whose leading bytes do not match the expected discriminator
+     means the event constant is wrong; children present and matching means the
+     event was emitted outside this invocation.
+   - `pair_unresolved` in bulk means mint resolution is failing.
 3. **`dump-tx`** on a signature from `ingest_skips`, then compare against the
    layouts above.
 

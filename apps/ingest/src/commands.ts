@@ -52,6 +52,29 @@ export async function stream(services: Services, options: StreamOptions = {}): P
   const { endpoint, xToken } = requireYellowstone(config);
 
   const controller = shutdownSignal(logger);
+
+  // Built before the metrics server, because the readiness probe closes over it
+  // and the socket starts accepting during the price warm-up below. Reading it
+  // from its temporal dead zone throws a ReferenceError inside a request
+  // listener, which nothing catches — one probe would have ended the boot.
+  // The constructor only stores options, so there is nothing to gain by
+  // deferring it and a process to lose.
+  const consumer = new StreamConsumer({
+    endpoint,
+    ...(xToken === undefined ? {} : { xToken }),
+    commitment: config.YELLOWSTONE_COMMITMENT,
+    pipeline: services.pipeline,
+    writer: services.writer,
+    metrics,
+    checkpoints: services.checkpoints,
+    logger,
+    programIds: PARSED_PROGRAM_IDS,
+    idleTimeoutMs: config.YELLOWSTONE_IDLE_TIMEOUT_MS,
+    pingIntervalMs: config.YELLOWSTONE_PING_INTERVAL_MS,
+    reconnectMinMs: config.YELLOWSTONE_RECONNECT_MIN_MS,
+    reconnectMaxMs: config.YELLOWSTONE_RECONNECT_MAX_MS,
+  });
+
   const server = config.METRICS_ENABLED
     ? startMetricsServer({
         port: config.METRICS_PORT,
@@ -70,22 +93,6 @@ export async function stream(services: Services, options: StreamOptions = {}): P
     });
     logger.info({ minutes: loaded }, 'SOL/USD series warmed');
   }
-
-  const consumer = new StreamConsumer({
-    endpoint,
-    ...(xToken === undefined ? {} : { xToken }),
-    commitment: config.YELLOWSTONE_COMMITMENT,
-    pipeline: services.pipeline,
-    writer: services.writer,
-    metrics,
-    checkpoints: services.checkpoints,
-    logger,
-    programIds: PARSED_PROGRAM_IDS,
-    idleTimeoutMs: config.YELLOWSTONE_IDLE_TIMEOUT_MS,
-    pingIntervalMs: config.YELLOWSTONE_PING_INTERVAL_MS,
-    reconnectMinMs: config.YELLOWSTONE_RECONNECT_MIN_MS,
-    reconnectMaxMs: config.YELLOWSTONE_RECONNECT_MAX_MS,
-  });
 
   logger.info({ endpoint, programs: PARSED_PROGRAM_IDS }, 'starting stream consumer');
 

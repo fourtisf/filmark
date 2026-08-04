@@ -1,4 +1,4 @@
-import { createServer, type Server } from 'node:http';
+import { createServer, type Server, type ServerResponse } from 'node:http';
 import { describeError, silentLogger, type IngestMetrics, type Logger } from '@exitliquidity/core';
 
 export interface MetricsServerOptions {
@@ -20,7 +20,20 @@ export function startMetricsServer(options: MetricsServerOptions): Server {
   const logger = options.logger ?? silentLogger;
 
   const server = createServer((request, response) => {
-    const path = (request.url ?? '/').split('?')[0];
+    // A throw in a request listener is not caught by server.on('error'); it
+    // reaches the top as an uncaught exception and ends the process. A probe
+    // must never be able to do that, whatever isReady closes over.
+    try {
+      handle(request.url ?? '/', response);
+    } catch (error) {
+      logger.error({ url: request.url, err: describeError(error) }, 'metrics request failed');
+      if (!response.headersSent) response.writeHead(500, { 'content-type': 'text/plain' });
+      response.end('error\n');
+    }
+  });
+
+  function handle(url: string, response: ServerResponse): void {
+    const path = url.split('?')[0];
 
     switch (path) {
       case '/metrics':
@@ -41,7 +54,7 @@ export function startMetricsServer(options: MetricsServerOptions): Server {
         response.writeHead(404, { 'content-type': 'text/plain' });
         response.end('not found\n');
     }
-  });
+  }
 
   server.on('error', (error) => {
     logger.error({ err: describeError(error) }, 'metrics server error');

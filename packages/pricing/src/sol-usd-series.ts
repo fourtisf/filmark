@@ -58,20 +58,32 @@ export class SolUsdSeries {
     if (this.#minutes.length === 0) return null;
 
     const target = floorToMinute(unixSeconds);
-    const index = this.#nearestIndex(target);
+    const index = this.#nearestIndex(target, unixSeconds);
     if (index === null) return null;
 
     const minute = this.#minutes[index] as number;
-    // Compare against the minute's own start; a bar stamped 12:00 covers
-    // 12:00:00-12:00:59, so a swap at 12:00:59 is not 59 seconds stale.
+    // Distance from the swap's own instant to the bar's minute start. A bar
+    // stamped 12:00 is the price at 12:00, so a swap at 12:00:59 is 59 seconds
+    // from it — the staleness bound is about how far the price has had to
+    // travel, not about which minute bucket the swap fell into.
     const ageSec = Math.abs(unixSeconds - minute);
     if (ageSec > this.maxStalenessSec) return null;
 
     return { usd: this.#closes[index] as number, ageSec };
   }
 
-  /** Index of the minute closest to `target`, by binary search. */
-  #nearestIndex(target: number): number | null {
+  /**
+   * Index of the minute closest to the swap, by binary search.
+   *
+   * `target` is the floored minute, which is what the index is keyed by;
+   * `unixSeconds` is the swap's own instant, which is what "closest" has to be
+   * measured from. Comparing gaps from the floored minute discards up to 59
+   * seconds and biases every tie towards the earlier bar: a swap at 1:59 with
+   * bars at 0:00 and 2:00 was given the bar two minutes behind it rather than
+   * the one a second ahead. At the staleness edge it did worse than pick the
+   * wrong bar — it returned null and left a priceable swap unpriced.
+   */
+  #nearestIndex(target: number, unixSeconds: number): number | null {
     const minutes = this.#minutes;
     let low = 0;
     let high = minutes.length - 1;
@@ -91,8 +103,8 @@ export class SolUsdSeries {
     if (before === null) return after;
     if (after === null) return before;
 
-    const beforeGap = target - (minutes[before] as number);
-    const afterGap = (minutes[after] as number) - target;
+    const beforeGap = Math.abs(unixSeconds - (minutes[before] as number));
+    const afterGap = Math.abs(unixSeconds - (minutes[after] as number));
     return beforeGap <= afterGap ? before : after;
   }
 }

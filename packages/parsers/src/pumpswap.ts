@@ -16,7 +16,14 @@ import {
   type TxContext,
 } from '@exitliquidity/solana';
 import { EVENT_PUMPSWAP_BUY, EVENT_PUMPSWAP_SELL, IX_BUY, IX_SELL } from './discriminators.js';
-import { EMPTY_RESULT, skip, type ParseResult, type ParseSkip, type SwapParser } from './parser.js';
+import {
+  EMPTY_RESULT,
+  describeChildren,
+  skip,
+  type ParseResult,
+  type ParseSkip,
+  type SwapParser,
+} from './parser.js';
 
 const VENUE: Venue = 'pumpswap';
 
@@ -136,7 +143,7 @@ export class PumpSwapParser implements SwapParser {
 
     const eventDiscriminator = isBuy ? EVENT_PUMPSWAP_BUY.bytes : EVENT_PUMPSWAP_SELL.bytes;
     const event = findChildEvent(node, eventDiscriminator);
-    if (event === null) return skip(VENUE, 'event_missing', ctx, node);
+    if (event === null) return skip(VENUE, 'event_missing', ctx, node, describeChildren(node));
     if (event.payload.length < EVENT_MIN_BYTES) {
       return skip(
         VENUE,

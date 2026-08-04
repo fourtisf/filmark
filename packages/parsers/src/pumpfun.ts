@@ -16,7 +16,14 @@ import {
   type TxContext,
 } from '@exitliquidity/solana';
 import { EVENT_TRADE, IX_BUY, IX_SELL } from './discriminators.js';
-import { EMPTY_RESULT, skip, type ParseResult, type ParseSkip, type SwapParser } from './parser.js';
+import {
+  EMPTY_RESULT,
+  describeChildren,
+  skip,
+  type ParseResult,
+  type ParseSkip,
+  type SwapParser,
+} from './parser.js';
 
 const VENUE: Venue = 'pumpfun';
 
@@ -117,7 +124,7 @@ export class PumpFunParser implements SwapParser {
     if (event === null) {
       // A failed inner call, or a program version that stopped emitting the
       // event. Either way there is no settled amount to record.
-      return skip(VENUE, 'event_missing', ctx, node);
+      return skip(VENUE, 'event_missing', ctx, node, describeChildren(node));
     }
     if (event.payload.length < TRADE_EVENT_MIN_BYTES) {
       return skip(

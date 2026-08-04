@@ -21,7 +21,9 @@ export type ParseSkipReason =
   /** Could not work out which side of the pair is the traded asset. */
   | 'pair_unresolved'
   /** Amounts were zero or otherwise not a real trade. */
-  | 'empty_trade';
+  | 'empty_trade'
+  /** The decoder threw — a layout that no longer matches what the program emits. */
+  | 'decode_error';
 
 export interface ParseSkip {
   readonly venue: Venue;
@@ -48,6 +50,26 @@ export const EMPTY_RESULT: ParseResult = Object.freeze({
   swaps: Object.freeze([]),
   skipped: Object.freeze([]),
 });
+
+/**
+ * Describes what was actually under an invocation, for an `event_missing` skip.
+ *
+ * Three unrelated causes collapse into that one reason: the program emitted
+ * nothing, it emitted an event that is not a child of this node, or it emitted
+ * a child whose discriminator we do not recognise. Without this the skip row
+ * records only a reason and two indices, and the documentation points at just
+ * one of the three — so the most operationally interesting failure in the
+ * pipeline is also the least self-explaining. The leading eight bytes are what
+ * a discriminator mismatch shows up as.
+ */
+export function describeChildren(node: InstructionNode): string {
+  if (node.children.length === 0) return 'node had no children';
+  const heads = node.children
+    .slice(0, 4)
+    .map((child) => Buffer.from(child.data.slice(0, 8)).toString('hex'))
+    .join(',');
+  return `${String(node.children.length)} children, leading bytes: ${heads}`;
+}
 
 export function skip(
   venue: Venue,

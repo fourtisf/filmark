@@ -39,9 +39,14 @@ export function parseTransaction(ctx: TxContext): ParseResult {
       swaps.push(...result.swaps);
       skipped.push(...result.skipped);
     } catch (error) {
+      // `decode_error`, not `not_a_swap`: the latter is documented as "the
+      // discriminator did not match", which is the opposite conclusion and
+      // would send a triage in exactly the wrong direction. The one reachable
+      // throw is a bounds or bool check failing, i.e. a layout that has
+      // drifted — the first thing docs/verification.md asks you to check.
       skipped.push({
         venue: parser.venue,
-        reason: 'not_a_swap',
+        reason: 'decode_error',
         signature: ctx.signature,
         ixIndex: -1,
         innerIxIndex: -1,

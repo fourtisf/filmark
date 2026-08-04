@@ -18,6 +18,30 @@ function candles(...entries: [offsetMinutes: number, close: number][]): SolUsdCa
 }
 
 describe('SolUsdSeries', () => {
+  it('measures nearness from the swap, not from its floored minute', () => {
+    // Bars two minutes apart, swap one second before the later one. Comparing
+    // gaps from the floored minute made the earlier bar look closer by 60
+    // seconds and handed back a price two minutes stale.
+    const series = new SolUsdSeries(300);
+    series.load(candles([0, 200], [2, 220]));
+
+    const near = series.lookup(BASE + 2 * MINUTE - 1);
+
+    expect(near?.usd).toBe(220);
+    expect(near?.ageSec).toBe(1);
+  });
+
+  it('prices a swap the floored comparison would have left unpriced', () => {
+    // The same error at the staleness edge does worse than pick the wrong bar.
+    // Swap at 5:59 with a bound of 300s: the 10:00 bar is 241 seconds away and
+    // usable, but measured from the floored 5:00 minute both bars are 300s out
+    // and the swap is written with a null usd_value.
+    const series = new SolUsdSeries(300);
+    series.load(candles([0, 200], [10, 260]));
+
+    expect(series.lookup(BASE + 5 * MINUTE + 59)?.usd).toBe(260);
+  });
+
   it('returns the exact minute when one exists', () => {
     const series = new SolUsdSeries(300);
     series.load(candles([0, 200], [1, 210], [2, 220]));

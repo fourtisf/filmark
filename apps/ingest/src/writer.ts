@@ -43,6 +43,7 @@ export class SwapWriter {
   #skips: SkipRow[] = [];
   #timer: NodeJS.Timeout | null = null;
   #inFlight: Promise<void> | null = null;
+  #lastWriteFailed = false;
   #closed = false;
 
   constructor(options: SwapWriterOptions) {
@@ -56,7 +57,20 @@ export class SwapWriter {
   }
 
   get pending(): number {
-    return this.#swaps.length;
+    // Skips count. They are rows waiting to be written, and reporting only
+    // swaps made /metrics say zero while thousands of skip rows sat buffered.
+    return this.#swaps.length + this.#skips.length;
+  }
+
+  /**
+   * True when the last write exhausted its retries.
+   *
+   * The stream reads this before advancing its checkpoint: acknowledging a slot
+   * whose rows were dropped turns a transient storage outage into a permanent,
+   * invisible hole that no restart will revisit.
+   */
+  get lastWriteFailed(): boolean {
+    return this.#lastWriteFailed;
   }
 
   /**
@@ -70,13 +84,18 @@ export class SwapWriter {
 
     this.#swaps.push(...swaps);
     this.#skips.push(...skips);
-    this.#metrics.pendingRows.set(this.#swaps.length);
+    this.#metrics.pendingRows.set(this.pending);
 
-    if (this.#swaps.length >= this.#maxPendingRows) {
+    // Every threshold counts both arrays. Measuring swaps alone meant a batch
+    // of nothing but parse skips armed no timer and hit no ceiling — so on a
+    // run where every instruction failed to parse, `swaps` was empty because
+    // nothing parsed and `ingest_skips` was empty because nothing flushed, and
+    // the table that exists to explain the shortfall explained nothing.
+    if (this.pending >= this.#maxPendingRows) {
       await this.flush();
       return;
     }
-    if (this.#swaps.length >= this.#maxRows) {
+    if (this.pending >= this.#maxRows) {
       // Deliberately not awaited: a full batch should start writing while the
       // caller keeps consuming the stream.
       void this.flush().catch(() => undefined);
@@ -88,8 +107,17 @@ export class SwapWriter {
   /** Writes everything buffered. Safe to call concurrently. */
   async flush(): Promise<void> {
     // Serialise flushes so two callers cannot interleave batches, and so the
-    // in-flight one is awaited rather than duplicated.
-    while (this.#inFlight !== null) await this.#inFlight;
+    // in-flight one is awaited rather than duplicated. The rejection is
+    // swallowed because #write has already logged and counted it: rethrowing
+    // here would abandon the buffer before the swap below, losing rows added
+    // since the failing batch started — including on close().
+    while (this.#inFlight !== null) {
+      try {
+        await this.#inFlight;
+      } catch {
+        /* already logged and counted by #write */
+      }
+    }
 
     if (this.#swaps.length === 0 && this.#skips.length === 0) return;
 
@@ -101,7 +129,7 @@ export class SwapWriter {
 
     this.#inFlight = this.#write(swaps, skips).finally(() => {
       this.#inFlight = null;
-      this.#metrics.pendingRows.set(this.#swaps.length);
+      this.#metrics.pendingRows.set(this.pending);
     });
 
     await this.#inFlight;
@@ -111,7 +139,17 @@ export class SwapWriter {
   async close(): Promise<void> {
     this.#closed = true;
     this.#clearTimer();
-    await this.flush();
+    try {
+      await this.flush();
+    } catch (error) {
+      // Say how much is being abandoned. "close failed" without a row count
+      // reads as a tidy-up problem rather than data loss.
+      this.#logger.error(
+        { rows: this.pending, err: describeError(error) },
+        'writer close failed with rows still buffered',
+      );
+      throw error;
+    }
   }
 
   async #write(swaps: NormalisedSwap[], skips: SkipRow[]): Promise<void> {
@@ -129,10 +167,13 @@ export class SwapWriter {
         },
       });
       this.#metrics.rowsWritten.inc({}, swaps.length);
+      this.#lastWriteFailed = false;
     } catch (error) {
+      this.#lastWriteFailed = true;
       // Losing rows silently would make the acceptance test unfalsifiable, so
       // the signatures go to the log where they can be re-backfilled.
       this.#metrics.errors.inc({ stage: 'write_failed' });
+      this.#metrics.dropped.inc({ reason: 'write_failed', source: 'writer' }, swaps.length);
       this.#logger.error(
         {
           rows: swaps.length,
@@ -156,7 +197,7 @@ export class SwapWriter {
   }
 
   #scheduleFlush(): void {
-    if (this.#timer !== null || this.#swaps.length === 0) return;
+    if (this.#timer !== null || this.pending === 0) return;
     this.#timer = setTimeout(() => {
       this.#timer = null;
       void this.flush().catch((error: unknown) => {

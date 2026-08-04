@@ -186,14 +186,15 @@ enough to check a token that has migrated from the bonding curve to the AMM.
 
 ```bash
 pnpm check          # format, lint, typecheck, test
-pnpm test           # 196 unit tests, no infrastructure required
+pnpm test           # 231 unit tests, no infrastructure required
 pnpm build          # tsc -b across the workspace
 ```
 
 The unit suite needs nothing running. Schema behaviour that only a real server
 can show — 64-bit precision, deduplication before merge, null handling — lives
 in `packages/clickhouse/src/integration.test.ts` and is skipped unless a server
-is pointed at:
+is pointed at. **Those ten are the only place the migrations are ever executed**,
+so a green `pnpm check` says nothing about whether the DDL is valid:
 
 ```bash
 docker compose up -d clickhouse

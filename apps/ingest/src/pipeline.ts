@@ -22,7 +22,8 @@ export type DropReason =
   | 'unknown_base_decimals'
   | 'unknown_quote_decimals'
   | 'below_min_usd'
-  | 'context_error';
+  | 'context_error'
+  | 'decimals_error';
 
 export interface PipelineOutput {
   readonly swaps: readonly NormalisedSwap[];
@@ -117,7 +118,23 @@ export class SwapPipeline {
     const normalised: NormalisedSwap[] = [];
     for (const swap of parsed) {
       this.#metrics.swaps.inc({ venue: swap.venue, source });
-      const row = await this.#normalise(swap, raw, source, signal);
+      let row: NormalisedSwap | null;
+      try {
+        row = await this.#normalise(swap, raw, source, signal);
+      } catch (error) {
+        // The class contract above is that everything here is a drop with a
+        // counter, never a throw — and #normalise awaits a mint lookup that
+        // can fail on storage or RPC. Unguarded, one such failure discarded
+        // every sibling swap in the transaction and, in a backfill, unwound
+        // the whole crawl past its final flush.
+        this.#metrics.dropped.inc({ reason: 'decimals_error', source });
+        this.#metrics.errors.inc({ stage: 'decimals' });
+        this.#logger.warn(
+          { signature: raw.signature, venue: swap.venue, err: describeError(error) },
+          'could not resolve decimals for a swap',
+        );
+        continue;
+      }
       if (row !== null) normalised.push(row);
     }
 

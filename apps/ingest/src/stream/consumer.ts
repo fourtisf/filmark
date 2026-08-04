@@ -142,7 +142,18 @@ export class StreamConsumer {
     try {
       await this.#pump(stream, signal);
     } finally {
+      // Order matters, and destroy() alone is not enough. grpc-js's duplex has
+      // no _destroy, so destroying it tears down the local stream and leaves
+      // the RPC live on the channel; when that RPC later ends non-OK, grpc-js
+      // emits 'error' on an emitter whose only listener was just removed, and
+      // an unhandled 'error' event takes the process down. Absorb the late
+      // status first, then actually cancel the call, then close the channel.
       stream.removeAllListeners();
+      stream.on('error', () => {
+        /* the status that arrives after cancel() has nowhere else to go */
+      });
+      stream.cancel?.();
+      (client as { _client?: { close?: () => void } })._client?.close?.();
       stream.destroy();
     }
   }
