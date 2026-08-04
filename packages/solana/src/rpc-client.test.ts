@@ -38,6 +38,20 @@ const rpcFault = (code: number, message: string): Response =>
     headers: { 'content-type': 'application/json' },
   });
 
+describe('SolanaRpcClient endpoint', () => {
+  it('reports where it is pointed without leaking the API key', () => {
+    // Every provider puts the key in the query string. This value is logged on
+    // every backfill, so anything past `?` must not survive.
+    const client = new SolanaRpcClient({
+      url: 'https://mainnet.helius-rpc.com/?api-key=00000000-1111-2222-3333-444444444444',
+      logger: silentLogger,
+    });
+
+    expect(client.endpoint).toBe('https://mainnet.helius-rpc.com/');
+    expect(client.endpoint).not.toContain('api-key');
+  });
+});
+
 describe('SolanaRpcClient batching', () => {
   /** Captures the request bodies so the number of round trips can be counted. */
   function batchClient(

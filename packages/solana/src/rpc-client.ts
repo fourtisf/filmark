@@ -143,6 +143,21 @@ export class SolanaRpcClient {
   }
 
   /**
+   * Where this client is pointed, safe to log.
+   *
+   * Host and path only. Every provider puts the API key in the query string, so
+   * anything past `?` is a credential and never belongs in a log line.
+   */
+  get endpoint(): string {
+    try {
+      const url = new URL(this.#url);
+      return `${url.protocol}//${url.host}${url.pathname}`;
+    } catch {
+      return '<unparseable url>';
+    }
+  }
+
+  /**
    * Transactions for many signatures, in the order requested, null where one has
    * been pruned or is not yet available.
    *

@@ -95,6 +95,10 @@ export class BackfillRunner {
     this.#logger.info(
       {
         address: request.address,
+        // Which endpoint is in use is not obvious from the outside: an exported
+        // variable beats .env by design, so a corrected file can be quietly
+        // ignored. A crawl that fails on rate limits must say who rate-limited it.
+        rpc: this.#options.rpc.endpoint,
         cutoffSec,
         until: request.untilSignature,
         pageSize,

@@ -35,11 +35,13 @@ function harness(
   let page = 0;
 
   const rpc: {
+    endpoint: string;
     getSignaturesForAddress: () => Promise<SignatureInfo[]>;
     getTransactions: (sigs: readonly string[]) => Promise<unknown[]>;
     getTransaction: (signature: string) => Promise<unknown>;
     transactionBatchSize: number;
   } = {
+    endpoint: 'https://rpc.invalid',
     getSignaturesForAddress: async (): Promise<SignatureInfo[]> => pages[page++] ?? [],
     transactionBatchSize: 1,
     getTransactions: async (sigs: readonly string[]): Promise<unknown[]> => {
