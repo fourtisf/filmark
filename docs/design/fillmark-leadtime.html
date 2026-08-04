@@ -3,26 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Lead-time radar — who buys before the move | ExitLiquidity</title>
+<title>Lead-time radar — who buys before the move | Fillmark</title>
 <meta name="description" content="Solana wallets ranked by how early they enter relative to the move, not by how much they made. Ranking on profit surfaces whales; ranking on timing surfaces people who knew.">
-<link rel="canonical" href="https://exitliquidity.xyz/lead-time">
+<link rel="canonical" href="https://fillmark.xyz/lead-time">
 <meta name="theme-color" content="#060607">
 <meta name="color-scheme" content="dark">
 
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="ExitLiquidity">
-<meta property="og:url" content="https://exitliquidity.xyz/lead-time">
+<meta property="og:site_name" content="Fillmark">
+<meta property="og:url" content="https://fillmark.xyz/lead-time">
 <meta property="og:title" content="Who buys before the move">
 <meta property="og:description" content="Ranked by how early wallets enter, not by how much they made. Ranking on profit surfaces whales; ranking on timing surfaces people who knew.">
-<meta property="og:image" content="https://exitliquidity.xyz/og-leadtime.png">
+<meta property="og:image" content="https://fillmark.xyz/og-leadtime.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Who buys before the move">
 <meta name="twitter:description" content="Solana wallets ranked by entry timing, not by profit.">
-<meta name="twitter:image" content="https://exitliquidity.xyz/og-leadtime.png">
+<meta name="twitter:image" content="https://fillmark.xyz/og-leadtime.png">
 
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060607'/%3E%3Crect x='12' y='12' width='8' height='8' fill='%23E23B2E'/%3E%3C/svg%3E">
+<link rel="icon" href="/favicon.svg">
 
 <script type="application/ld+json" id="ld-list"></script>
 
@@ -67,7 +67,7 @@ h1,h2,h3{font-weight:400}
 .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:13.5px;
   letter-spacing:-.02em;font-variation-settings:'wdth' 108}
 .logo i{font-style:normal;font-weight:300;color:var(--g3)}
-.sq{width:7px;height:7px;background:var(--rd)}
+.mark{width:17px;height:17px;flex:none;display:block}
 .nav-l{display:flex;align-items:center;gap:28px;font-family:var(--mono);font-size:10.5px;
   letter-spacing:.16em;text-transform:uppercase;color:var(--g2)}
 .nav-l a:hover,.nav-l a[aria-current="page"]{color:var(--wh)}
@@ -211,14 +211,14 @@ footer a:hover{color:var(--wh)}
 
 <nav class="nav">
   <div class="nav-in">
-    <a class="logo" href="exitliquidity-landing.html"><span class="sq"></span>EXIT<i>LIQUIDITY</i></a>
+    <a class="logo" href="/"><!--LOGO--><svg class="mark" viewBox="0 0 24 24" aria-hidden="true" shape-rendering="crispEdges"><rect x="11" y="1" width="2" height="22" fill="#7E858E"/> <rect x="1" y="11" width="22" height="2" fill="#7E858E"/> <rect x="8.5" y="8.5" width="7" height="7" fill="#E23B2E"/></svg><!--/LOGO-->FILL<i>MARK</i></a>
     <div class="nav-l">
-      <a href="exitliquidity-index.html">Index</a>
-      <a href="exitliquidity-leadtime.html" aria-current="page">Lead-time</a>
-      <a href="exitliquidity-landing.html#method">Method</a>
-      <a href="exitliquidity-landing.html#pricing">Pricing</a>
+      <a href="/extractors/">Index</a>
+      <a href="/lead-time/" aria-current="page">Lead-time</a>
+      <a href="/#method">Method</a>
+      <a href="/#pricing">Pricing</a>
     </div>
-    <a class="btn" href="exitliquidity-app.html">Trace a wallet</a>
+    <a class="btn" href="/app/">Trace a wallet</a>
   </div>
 </nav>
 
@@ -334,7 +334,7 @@ footer a:hover{color:var(--wh)}
     </div>
 
     <div class="more">
-      <a class="btn btn-o" href="exitliquidity-index.html">See the same wallets ranked by dollars</a>
+      <a class="btn btn-o" href="/extractors/">See the same wallets ranked by dollars</a>
       <small>Showing 10 of 100 · demo data · rolling 30 days</small>
     </div>
   </section>
@@ -353,16 +353,16 @@ footer a:hover{color:var(--wh)}
       <h2>Any of these ever been<br>early on <u>you?</u></h2>
       <p>Paste an address. If one of these wallets was reducing supply into a window you were buying into, it will be in your ledger.</p>
     </div>
-    <a class="btn btn-r" href="exitliquidity-app.html">Trace a wallet</a>
+    <a class="btn btn-r" href="/app/">Trace a wallet</a>
   </section>
 
   <footer>
-    <span>ExitLiquidity — prototype</span>
+    <span>Fillmark — prototype</span>
     <nav aria-label="Public pages">
-      <a href="exitliquidity-landing.html">Home</a>
-      <a href="exitliquidity-index.html">Extractor index</a>
-      <a href="exitliquidity-app.html">Console</a>
-      <a href="exitliquidity-landing.html#method">Method</a>
+      <a href="/">Home</a>
+      <a href="/extractors/">Extractor index</a>
+      <a href="/app/">Console</a>
+      <a href="/#method">Method</a>
     </nav>
     <span>All figures on this page are demo data</span>
   </footer>
@@ -416,13 +416,13 @@ document.getElementById("ld-list").textContent=JSON.stringify({
   itemListOrder:"https://schema.org/ItemListOrderAscending",
   itemListElement:ROWS.map(([addr,,pumps,hit,lead],i)=>({
     "@type":"ListItem",position:i+1,name:addr,
-    url:"https://exitliquidity.xyz/extractor/"+addr,
+    url:"https://fillmark.xyz/extractor/"+addr,
     description:lead+" median lead across "+pumps+" moves, "+hit+" before the move"}))
 });
 
 document.getElementById("rows").innerHTML=ROWS.map(
   ([addr,tag,pumps,hit,lead,entries],i)=>`
-  <a class="row" href="exitliquidity-app.html">
+  <a class="row" href="/app/">
     <span class="rk">${String(i+1).padStart(2,"0")}</span>
     <span class="who">${addr}<small>${tag}</small></span>
     <span class="dist" role="img" aria-label="${entries.filter(e=>e<0).length} of ${entries.length} sampled entries landed before the move">

@@ -1,6 +1,6 @@
-# ExitLiquidity
+# Fillmark
 
-Solana counterparty forensics. The spec is [`docs/exitliquidity-handoff.md`](docs/exitliquidity-handoff.md); read it before this file.
+Solana counterparty forensics. Live at [fillmark.xyz](https://fillmark.xyz). The spec is [`docs/exitliquidity-handoff.md`](docs/exitliquidity-handoff.md); read it before this file.
 
 **This repository is at P0: swap ingest.** Pump.fun bonding curve and PumpSwap
 swaps are streamed, backfilled and normalised into the `swaps` table from §5.
@@ -31,15 +31,15 @@ Static, in `docs/design/`. Open them straight from the filesystem — they have 
 build step and no backend. All four share one palette, one type system and one
 accent colour, taken from the landing page, which §3 makes the source of truth.
 
-| File                          | What it is                                                 |
-| ----------------------------- | ---------------------------------------------------------- |
-| `exitliquidity-landing.html`  | Marketing page. Design source of truth (§3)                |
-| `exitliquidity-index.html`    | Extractor index — biggest takers, 7/30/90d                 |
-| `exitliquidity-leadtime.html` | Lead-time radar, with the pump definition §8 asks for      |
-| `exitliquidity-app.html`      | Console: trace, pre-trade, file, watchlist, receipt, card  |
-| `404.html`                    | Not-found page                                             |
-| `robots.txt`, `sitemap.xml`   | Crawl rules and the fixed routes                           |
-| `og/*.png`                    | Link-preview cards, built by `scripts/build-og-images.mjs` |
+| File                        | Route          | What it is                                                |
+| --------------------------- | -------------- | --------------------------------------------------------- |
+| `fillmark-landing.html`     | `/`            | Marketing page. Design source of truth (§3)               |
+| `fillmark-index.html`       | `/extractors/` | Extractor index — biggest takers, 7/30/90d                |
+| `fillmark-leadtime.html`    | `/lead-time/`  | Lead-time radar, with the pump definition §8 asks for     |
+| `fillmark-app.html`         | `/app/`        | Console: trace, pre-trade, file, watchlist, receipt, card |
+| `404.html`                  | `/404.html`    | Not-found page                                            |
+| `robots.txt`, `sitemap.xml` | —              | Crawl rules and the fixed routes                          |
+| `logo/`, `og/`              | —              | Mark candidates and link-preview cards                    |
 
 The two ranking pages take `?state=loading`, `?state=empty` and `?state=error`
 so those states can be reviewed at all — otherwise the only one anybody ever
@@ -48,6 +48,22 @@ sees is the happy path.
 Every text colour in all four pages clears WCAG AA (4.5:1); the audit that
 proves it is described in `DECISIONS.md` under Design. The route table that P3
 renders against is [`docs/url-scheme.md`](docs/url-scheme.md).
+
+### Building the site
+
+```bash
+node scripts/build-logo-options.mjs   # render the mark candidates
+node scripts/set-logo.mjs d           # apply one everywhere, including the favicon
+node scripts/build-og-images.mjs      # regenerate the three link-preview cards
+node scripts/build-site.mjs           # assemble dist/
+```
+
+`dist/` is a plain static site — no build step, no server config. Its directory
+layout is what produces clean URLs on any Apache or nginx host; upload the
+contents into `public_html/` and every route above resolves.
+
+The marks live in `scripts/logo-marks.mjs` and nowhere else, so changing the
+identity is one word on the `set-logo` line.
 
 The index and lead-time pages are the two surfaces §1 calls the acquisition
 core — the only ones a first-time visitor can read without pasting anything —

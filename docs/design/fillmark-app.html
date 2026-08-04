@@ -3,27 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ExitLiquidity — console</title>
+<title>Fillmark — console</title>
 <meta name="description" content="Paste a Solana wallet. Every position closed in the red is netted against pool activity in the same window and mapped to the wallets that were reducing supply into it.">
-<link rel="canonical" href="https://exitliquidity.xyz/app">
+<link rel="canonical" href="https://fillmark.xyz/app">
 <meta name="theme-color" content="#060607">
 <meta name="color-scheme" content="dark">
 <meta name="robots" content="noindex">
 
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="ExitLiquidity">
-<meta property="og:url" content="https://exitliquidity.xyz/app">
-<meta property="og:title" content="Trace a wallet — ExitLiquidity">
+<meta property="og:site_name" content="Fillmark">
+<meta property="og:url" content="https://fillmark.xyz/app">
+<meta property="og:title" content="Trace a wallet — Fillmark">
 <meta property="og:description" content="Every position you closed in the red, mapped to the wallets on the other side of it.">
-<meta property="og:image" content="https://exitliquidity.xyz/og.png">
+<meta property="og:image" content="https://fillmark.xyz/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Trace a wallet — ExitLiquidity">
+<meta name="twitter:title" content="Trace a wallet — Fillmark">
 <meta name="twitter:description" content="Every position you closed in the red, mapped to the wallets on the other side of it.">
-<meta name="twitter:image" content="https://exitliquidity.xyz/og.png">
+<meta name="twitter:image" content="https://fillmark.xyz/og.png">
 
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060607'/%3E%3Crect x='12' y='12' width='8' height='8' fill='%23E23B2E'/%3E%3C/svg%3E">
+<link rel="icon" href="/favicon.svg">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -60,7 +60,7 @@ h1,h2,h3{font-weight:400}
   display:flex;align-items:center;justify-content:space-between;gap:20px}
 .logo{display:flex;align-items:center;gap:11px;font-weight:600;font-size:13.5px}
 .logo i{font-style:normal;font-weight:300;color:var(--text3)}
-.dot{width:7px;height:7px;background:var(--ext)}
+.mark{width:16px;height:16px;flex:none;display:block}
 .who-bar{font-family:var(--mono);font-size:10.5px;color:var(--text3);
   letter-spacing:.12em;text-transform:uppercase;text-align:right}
 .who-bar b{display:block;color:var(--gold);font-weight:400;letter-spacing:.04em;
@@ -308,17 +308,17 @@ footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
 <body>
 
 <div class="top"><div class="top-in">
-  <a class="logo" href="exitliquidity-landing.html"><span class="dot"></span>Exit<i>Liquidity</i></a>
+  <a class="logo" href="/"><!--LOGO--><svg class="mark" viewBox="0 0 24 24" aria-hidden="true" shape-rendering="crispEdges"><rect x="11" y="1" width="2" height="22" fill="#7E858E"/> <rect x="1" y="11" width="22" height="2" fill="#7E858E"/> <rect x="8.5" y="8.5" width="7" height="7" fill="#E23B2E"/></svg><!--/LOGO-->FILL<i>MARK</i></a>
   <div class="top-l">
-    <a href="exitliquidity-index.html">Index</a>
-    <a href="exitliquidity-leadtime.html">Lead-time</a>
-    <a href="exitliquidity-landing.html#pricing">Pricing</a>
+    <a href="/extractors/">Index</a>
+    <a href="/lead-time/">Lead-time</a>
+    <a href="/#pricing">Pricing</a>
   </div>
   <div class="who-bar">Active wallet<b id="active">none — run a trace</b></div>
 </div></div>
 <div class="quota" id="quota" hidden>
   <span id="quota-n"></span>
-  <a href="exitliquidity-landing.html#pricing">Upgrade</a>
+  <a href="/#pricing">Upgrade</a>
 </div>
 
 <div class="rail"><div class="rail-in" id="rail">
@@ -486,12 +486,12 @@ footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
   <div class="sec-k" style="margin:0">Method</div>
   <div>
     <p>On an AMM you don't trade against a person, you trade against a pool. No tool can prove wallet A handed money to wallet B, and anything claiming otherwise is selling certainty it doesn't have.</p>
-    <p>ExitLiquidity measures <b>overlap</b>. Per pool, buys and sells are netted inside a short window. A wallet reducing supply into the window your position opened is attributed a share of that supply, weighted by size. Every row carries its window, so the attribution is checkable rather than asserted.</p>
+    <p>Fillmark measures <b>overlap</b>. Per pool, buys and sells are netted inside a short window. A wallet reducing supply into the window your position opened is attributed a share of that supply, weighted by size. Every row carries its window, so the attribution is checkable rather than asserted.</p>
     <p>Realised profit and loss only — open positions are excluded, because an unrealised loss hasn't paid anyone yet.</p>
   </div>
 </section>
 
-<footer><span>ExitLiquidity — prototype</span><span>All figures shown are demo data</span></footer>
+<footer><span>Fillmark — prototype</span><span>All figures shown are demo data</span></footer>
 </div>
 
 <script>
@@ -648,7 +648,7 @@ function ledger(m){
        <p><b>${hidden} more counterpart${hidden>1?"ies":"y"} in this trace.</b>
        The totals above are complete — the addresses are held back until the free
        counter resets at 00:00 UTC.</p>
-       <a class="go" href="exitliquidity-landing.html#pricing"
+       <a class="go" href="/#pricing"
           style="display:inline-block;padding:12px 22px">See Pro</a>
      </div>`);
   $$("#led .row").forEach(b=>{
@@ -793,7 +793,7 @@ function cardSVG(){
 <rect width="640" height="640" fill="#060607"/>
 <rect x="1" y="1" width="638" height="638" fill="none" stroke="#1B1E22"/>
 <rect x="52" y="54" width="8" height="8" fill="#E23B2E"/>
-<text x="72" y="63" font-family="Archivo,sans-serif" font-size="15" font-weight="600" fill="#F5F6F7">ExitLiquidity</text>
+<text x="72" y="63" font-family="Archivo,sans-serif" font-size="15" font-weight="600" fill="#F5F6F7">Fillmark</text>
 <text x="56" y="240" font-family="JetBrains Mono,monospace" font-size="12" letter-spacing="3" fill="#6B727A">NET EXTRACTED</text>
 <text x="56" y="330" font-family="Archivo,sans-serif" font-size="88" font-weight="300" fill="#E23B2E">${usd(M.net)}</text>
 <line x1="56" y1="382" x2="584" y2="382" stroke="#1B1E22"/>
@@ -809,7 +809,7 @@ function renderCard(){ $("#cardbox").innerHTML=cardSVG(); }
 $("#dl").addEventListener("click",()=>{
   const b=new Blob([cardSVG()],{type:"image/svg+xml"});
   const a=document.createElement("a");a.href=URL.createObjectURL(b);
-  a.download="exitliquidity-"+M.d.short.replace(/…/g,"-")+".svg";a.click();
+  a.download="fillmark-"+M.d.short.replace(/…/g,"-")+".svg";a.click();
   URL.revokeObjectURL(a.href);$("#cardstate").innerHTML="Downloaded";
 });
 $("#cp").addEventListener("click",async()=>{

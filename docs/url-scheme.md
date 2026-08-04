@@ -11,26 +11,27 @@ point.
 
 ## Routes
 
-| Route                                   | Page            | Index? | Notes                                                |
-| --------------------------------------- | --------------- | ------ | ---------------------------------------------------- |
-| `/`                                     | Landing         | yes    |                                                      |
-| `/index/7d`, `/index/30d`, `/index/90d` | Extractor index | yes    | Window in the path, not a query string               |
-| `/lead-time`                            | Lead-time radar | yes    |                                                      |
-| `/token/<mint>`                         | Token receipt   | yes    | The volume play. One per token that clears the floor |
-| `/extractor/<address>`                  | Extractor file  | yes    | The other volume play                                |
-| `/app`                                  | Console         | **no** | No stable content behind a paste box                 |
-| `/trace/<address>`                      | Wallet trace    | **no** | See below                                            |
-| `/receipt/<trace-id>.png`               | Receipt card    | n/a    | Served as an image, referenced from OG tags          |
+| Route                                                  | Page            | Index? | Notes                                                |
+| ------------------------------------------------------ | --------------- | ------ | ---------------------------------------------------- |
+| `/`                                                    | Landing         | yes    |                                                      |
+| `/extractors/7d`, `/extractors/30d`, `/extractors/90d` | Extractor index | yes    | Window in the path, not a query string               |
+| `/lead-time`                                           | Lead-time radar | yes    |                                                      |
+| `/token/<mint>`                                        | Token receipt   | yes    | The volume play. One per token that clears the floor |
+| `/extractor/<address>`                                 | Extractor file  | yes    | The other volume play                                |
+| `/app`                                                 | Console         | **no** | No stable content behind a paste box                 |
+| `/trace/<address>`                                     | Wallet trace    | **no** | See below                                            |
+| `/receipt/<trace-id>.png`                              | Receipt card    | n/a    | Served as an image, referenced from OG tags          |
 
 ## Why the window belongs in the path
 
-`/index?w=30` and `/index?w=7` are one URL to a crawler unless every
+`/extractors?w=30` and `/extractors?w=7` are one URL to a crawler unless every
 combination is declared canonical separately, and even then the ranking signal
 splits badly. Three paths are three pages, each canonicalising to itself, each
 able to rank for its own phrasing ("biggest Solana extractors this week").
 
 The prototype demonstrates this: the window buttons push a real URL and the
-canonical tag follows.
+canonical tag follows. `index` is avoided as a path segment because it collides
+with `index.html` on a static host.
 
 ## Why `/trace/` is noindex
 

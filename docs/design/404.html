@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Not found — ExitLiquidity</title>
+<title>Not found — Fillmark</title>
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#060607">
 <meta name="color-scheme" content="dark">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060607'/%3E%3Crect x='12' y='12' width='8' height='8' fill='%23E23B2E'/%3E%3C/svg%3E">
+<link rel="icon" href="/favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -38,7 +38,7 @@ h1{font-weight:400}
 .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:13.5px;
   letter-spacing:-.02em;font-variation-settings:'wdth' 108}
 .logo i{font-style:normal;font-weight:300;color:var(--g3)}
-.sq{width:7px;height:7px;background:var(--rd)}
+.mark{width:17px;height:17px;flex:none;display:block}
 
 main{flex:1;display:flex;align-items:center;padding:80px 0}
 .kick{font-family:var(--mono);font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;
@@ -74,7 +74,7 @@ footer a:hover{color:var(--wh)}
 <div class="rule" aria-hidden="true"><div><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
 
 <nav class="nav"><div class="nav-in">
-  <a class="logo" href="exitliquidity-landing.html"><span class="sq"></span>EXIT<i>LIQUIDITY</i></a>
+  <a class="logo" href="/"><!--LOGO--><svg class="mark" viewBox="0 0 24 24" aria-hidden="true" shape-rendering="crispEdges"><rect x="11" y="1" width="2" height="22" fill="#7E858E"/> <rect x="1" y="11" width="22" height="2" fill="#7E858E"/> <rect x="8.5" y="8.5" width="7" height="7" fill="#E23B2E"/></svg><!--/LOGO-->FILL<i>MARK</i></a>
 </div></nav>
 
 <main><div class="w">
@@ -83,15 +83,15 @@ footer a:hover{color:var(--wh)}
   <p class="lede">Either the address doesn't exist, or it does and nothing has closed against it yet. A wallet with no realised losses has nothing to attribute, so there is no page to build.</p>
 
   <div class="opts">
-    <a href="exitliquidity-index.html">
+    <a href="/extractors/">
       <b>Extractor index</b>
       <span>The biggest takers on Solana, over 7, 30 and 90 days.</span>
     </a>
-    <a href="exitliquidity-leadtime.html">
+    <a href="/lead-time/">
       <b>Lead-time radar</b>
       <span>Wallets ranked by how early they enter, not by how much they made.</span>
     </a>
-    <a href="exitliquidity-app.html">
+    <a href="/app/">
       <b>Trace a wallet</b>
       <span>Paste an address and see who was on the other side.</span>
     </a>
@@ -99,8 +99,8 @@ footer a:hover{color:var(--wh)}
 </div></main>
 
 <div class="w"><footer>
-  <span>ExitLiquidity — prototype</span>
-  <a href="exitliquidity-landing.html">Home</a>
+  <span>Fillmark — prototype</span>
+  <a href="/">Home</a>
 </footer></div>
 
 </body>

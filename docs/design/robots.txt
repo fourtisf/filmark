@@ -1,4 +1,4 @@
-# ExitLiquidity
+# Fillmark
 #
 # The public pages are the entire organic acquisition strategy (spec §4), so
 # everything that aggregates is open. Two things are not:
@@ -18,6 +18,6 @@ Disallow: /*?wallet=
 # Crawl the token and extractor pages at a sane pace; there are a lot of them.
 Crawl-delay: 1
 
-Sitemap: https://exitliquidity.xyz/sitemap.xml
-Sitemap: https://exitliquidity.xyz/sitemap-tokens.xml
-Sitemap: https://exitliquidity.xyz/sitemap-extractors.xml
+Sitemap: https://fillmark.xyz/sitemap.xml
+Sitemap: https://fillmark.xyz/sitemap-tokens.xml
+Sitemap: https://fillmark.xyz/sitemap-extractors.xml

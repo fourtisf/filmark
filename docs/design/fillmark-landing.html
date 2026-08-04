@@ -3,29 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ExitLiquidity — every loss has a counterparty</title>
+<title>Fillmark — every loss has a counterparty</title>
 <meta name="description" content="Solana counterparty forensics. Paste a wallet and see which addresses were reducing supply into the windows your losing positions opened — ranked by dollars, with the window on every row.">
-<link rel="canonical" href="https://exitliquidity.xyz/">
+<link rel="canonical" href="https://fillmark.xyz/">
 <meta name="theme-color" content="#060607">
 <meta name="color-scheme" content="dark">
 
 <!-- Distribution is people posting traces into Telegram and X. A blank link
      preview there costs more reach than any of the copy on this page earns. -->
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="ExitLiquidity">
-<meta property="og:url" content="https://exitliquidity.xyz/">
+<meta property="og:site_name" content="Fillmark">
+<meta property="og:url" content="https://fillmark.xyz/">
 <meta property="og:title" content="Every loss has a counterparty">
-<meta property="og:description" content="Your money didn't evaporate — a wallet is holding it. ExitLiquidity nets pool activity window by window to work out who was distributing while you were buying.">
-<meta property="og:image" content="https://exitliquidity.xyz/og.png">
+<meta property="og:description" content="Your money didn't evaporate — a wallet is holding it. Fillmark nets pool activity window by window to work out who was distributing while you were buying.">
+<meta property="og:image" content="https://fillmark.xyz/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Three closed losses flowing into three counterparty wallets">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Every loss has a counterparty">
 <meta name="twitter:description" content="Paste a Solana wallet. See who was on the other side of every position you closed in the red.">
-<meta name="twitter:image" content="https://exitliquidity.xyz/og.png">
+<meta name="twitter:image" content="https://fillmark.xyz/og.png">
 
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060607'/%3E%3Crect x='12' y='12' width='8' height='8' fill='%23E23B2E'/%3E%3C/svg%3E">
+<link rel="icon" href="/favicon.svg">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,7 +74,7 @@ h1,h2,h3{font-weight:400}
 .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:13.5px;
   letter-spacing:-.02em;font-variation-settings:'wdth' 108}
 .logo i{font-style:normal;font-weight:300;color:var(--g3)}
-.sq{width:7px;height:7px;background:var(--rd)}
+.mark{width:17px;height:17px;flex:none;display:block}
 .nav-l{display:flex;align-items:center;gap:28px;font-family:var(--mono);font-size:10.5px;
   letter-spacing:.16em;text-transform:uppercase;color:var(--g2)}
 .nav-l a:hover,.nav-l button:hover{color:var(--wh)}
@@ -295,14 +295,14 @@ footer a:hover{color:var(--wh)}
 
 <nav class="nav">
   <div class="nav-in">
-    <div class="logo"><span class="sq"></span>EXIT<i>LIQUIDITY</i></div>
+    <div class="logo"><!--LOGO--><svg class="mark" viewBox="0 0 24 24" aria-hidden="true" shape-rendering="crispEdges"><rect x="11" y="1" width="2" height="22" fill="#7E858E"/> <rect x="1" y="11" width="22" height="2" fill="#7E858E"/> <rect x="8.5" y="8.5" width="7" height="7" fill="#E23B2E"/></svg><!--/LOGO-->FILL<i>MARK</i></div>
     <div class="nav-l">
       <button id="mbtn" aria-expanded="false" aria-controls="mega">Features<span class="car">▼</span></button>
-      <a href="exitliquidity-index.html" class="desk">Index</a>
+      <a href="/extractors/" class="desk">Index</a>
       <a href="#method" class="desk">Method</a>
       <a href="#pricing" class="desk">Pricing</a>
     </div>
-    <a class="btn" href="exitliquidity-app.html">Trace a wallet</a>
+    <a class="btn" href="/app/">Trace a wallet</a>
   </div>
 
   <div class="mega" id="mega">
@@ -321,9 +321,9 @@ footer a:hover{color:var(--wh)}
       </div>
       <div class="mcol">
         <h4>Public pages</h4>
-        <a href="exitliquidity-app.html#token"><b>Token receipt</b><span>Who funded whom, per token</span></a>
-        <a href="exitliquidity-index.html"><b>Extractor index</b><span>Solana's biggest takers, ranked</span></a>
-        <a href="exitliquidity-leadtime.html"><b>Lead-time radar</b><span>Wallets ranked by how early they are</span></a>
+        <a href="/app/#token"><b>Token receipt</b><span>Who funded whom, per token</span></a>
+        <a href="/extractors/"><b>Extractor index</b><span>Solana's biggest takers, ranked</span></a>
+        <a href="/lead-time/"><b>Lead-time radar</b><span>Wallets ranked by how early they are</span></a>
       </div>
       <div class="mcol">
         <h4>Take it with you</h4>
@@ -340,9 +340,9 @@ footer a:hover{color:var(--wh)}
   <section class="hero">
     <div class="kick">Solana · counterparty forensics</div>
     <h1>Every loss has<br><em>a</em> <u>counterparty.</u></h1>
-    <p class="lede">Your money didn't evaporate — a wallet is holding it. ExitLiquidity nets pool activity window by window to work out who was distributing while you were buying, then keeps watching them for you.</p>
+    <p class="lede">Your money didn't evaporate — a wallet is holding it. Fillmark nets pool activity window by window to work out who was distributing while you were buying, then keeps watching them for you.</p>
 
-    <form class="field" id="trace-form" action="exitliquidity-app.html" method="get">
+    <form class="field" id="trace-form" action="/app/" method="get">
       <input id="addr" name="wallet" type="text" spellcheck="false" autocomplete="off"
         placeholder="Solana wallet address" aria-label="Solana wallet address">
       <button class="go" type="submit">Trace wallet</button>
@@ -409,7 +409,7 @@ footer a:hover{color:var(--wh)}
     <p class="sec-n">Three pages open to everyone, no account. Same engine, pointed at the whole chain instead of at you.</p>
 
     <div class="open">
-      <a href="exitliquidity-index.html">
+      <a href="/extractors/">
         <div class="open-l">Top extractor · 30d</div>
         <div class="open-v neg">$2.14M</div>
         <div class="open-l">9mQr…4kR8 · 1,284 wallets</div>
@@ -417,7 +417,7 @@ footer a:hover{color:var(--wh)}
         <p>Every wallet on Solana ranked by dollars taken out, over 7, 30 and 90 days.</p>
         <span class="open-go">Read the index →</span>
       </a>
-      <a href="exitliquidity-leadtime.html">
+      <a href="/lead-time/">
         <div class="open-l">Sharpest median lead</div>
         <div class="open-v neg">−41s</div>
         <div class="open-l">Qw8x…2pRv · 96 pumps</div>
@@ -425,7 +425,7 @@ footer a:hover{color:var(--wh)}
         <p>Ranked by how early wallets buy relative to the move — not by how much they made.</p>
         <span class="open-go">Read the radar →</span>
       </a>
-      <a href="exitliquidity-app.html#token">
+      <a href="/app/#token">
         <div class="open-l">$BONKX · net transfer</div>
         <div class="open-v neg">$2.14M</div>
         <div class="open-l">3,412 funded · 14 took</div>
@@ -443,7 +443,7 @@ footer a:hover{color:var(--wh)}
     <div class="sec-k" style="margin:0">Method</div>
     <div>
       <p>On an AMM you don't trade against a person, you trade against a pool. No tool can prove wallet A handed money to wallet B, and anything claiming otherwise is selling certainty it doesn't have.</p>
-      <p>What ExitLiquidity measures is <b>overlap</b>. Per pool, buys and sells are netted inside a short window. A wallet reducing supply into the window your position opened is attributed a share of that supply, weighted by size. Every row carries the window it came from, so you can check the attribution instead of trusting it.</p>
+      <p>What Fillmark measures is <b>overlap</b>. Per pool, buys and sells are netted inside a short window. A wallet reducing supply into the window your position opened is attributed a share of that supply, weighted by size. Every row carries the window it came from, so you can check the attribution instead of trusting it.</p>
       <p>Realised profit and loss only — open positions are excluded, because an unrealised loss hasn't paid anyone yet. Read-only: pasting an address is the whole authentication model, and there is nothing to connect or approve.</p>
       <p class="note-m">Pool · timestamp · slot range on every attributed row. Checkable, not asserted.</p>
     </div>
@@ -488,7 +488,7 @@ footer a:hover{color:var(--wh)}
     <div class="grp">
       <div class="grp-h"><b>Look backward</b><span>What already happened, and who it happened to you for.</span></div>
       <div class="cards">
-        <a class="card" id="f-trace" href="exitliquidity-app.html#trace">
+        <a class="card" id="f-trace" href="/app/#trace">
           <svg viewBox="0 0 200 70" aria-hidden="true"><g fill="var(--rd)">
             <path opacity=".5" d="M32,10 C100,10 108,6 168,6 L168,18 C108,18 100,24 32,24 Z"/>
             <path opacity=".32" d="M32,24 C100,24 108,34 168,34 L168,46 C108,46 100,36 32,36 Z"/>
@@ -578,7 +578,7 @@ footer a:hover{color:var(--wh)}
     <div class="grp">
       <div class="grp-h"><b>Public pages</b><span>Open, linkable, no account. This is how people find the product.</span></div>
       <div class="cards">
-        <a class="card" id="f-token" href="exitliquidity-app.html#token">
+        <a class="card" id="f-token" href="/app/#token">
           <svg viewBox="0 0 200 70" aria-hidden="true">
             <text x="14" y="16" font-family="var(--mono)" font-size="9" fill="var(--g1)">$BONKX</text>
             <rect x="14" y="24" width="128" height="22" fill="var(--rd)" opacity=".55"/>
@@ -590,7 +590,7 @@ footer a:hover{color:var(--wh)}
           <span class="card-go">Read one →</span>
         </a>
 
-        <a class="card" id="f-index" href="exitliquidity-index.html">
+        <a class="card" id="f-index" href="/extractors/">
           <svg viewBox="0 0 200 70" aria-hidden="true"><g fill="var(--rd)">
             <rect x="52" y="8" width="134" height="9" opacity=".8"/><rect x="52" y="22" width="104" height="9" opacity=".6"/>
             <rect x="52" y="36" width="78" height="9" opacity=".45"/><rect x="52" y="50" width="52" height="9" opacity=".3"/></g>
@@ -602,7 +602,7 @@ footer a:hover{color:var(--wh)}
           <span class="card-go">Read the index →</span>
         </a>
 
-        <a class="card" id="f-lead" href="exitliquidity-leadtime.html">
+        <a class="card" id="f-lead" href="/lead-time/">
           <svg viewBox="0 0 200 70" aria-hidden="true">
             <line x1="14" y1="52" x2="186" y2="52" stroke="var(--ln2)"/>
             <polyline points="120,52 138,38 152,14 170,10" fill="none" stroke="var(--g3)" stroke-width="1.5"/>
@@ -662,7 +662,7 @@ footer a:hover{color:var(--wh)}
         <div class="p-n">Open</div><div class="p-v">$0</div>
         <ul><li>Three wallet traces a day</li><li>Token receipts and extractor index</li>
           <li>Lead-time radar</li><li>Receipt card and Telegram bot</li></ul>
-        <a class="btn btn-o" href="exitliquidity-app.html">Trace a wallet</a>
+        <a class="btn btn-o" href="/app/">Trace a wallet</a>
         <p class="p-q">On the fourth trace of the day the ledger still renders — counts, totals and the top row stay visible. The addresses below it are held back until the counter resets at 00:00 UTC, or until you upgrade.</p>
       </div>
       <div class="p">
@@ -670,7 +670,7 @@ footer a:hover{color:var(--wh)}
         <ul><li>Unlimited traces</li><li>Pre-trade check and distribution alerts</li>
           <li>Extractor files and cluster maps</li><li>25 watched wallets on Telegram</li>
           <li>CSV export and API access</li></ul>
-        <a class="btn btn-r" href="exitliquidity-app.html">Start Pro</a>
+        <a class="btn btn-r" href="/app/">Start Pro</a>
         <p class="p-q">Monthly, cancel any time, no wallet connect at any tier. One pre-trade check that stops one bad entry covers the year.</p>
       </div>
     </div>
@@ -694,15 +694,15 @@ footer a:hover{color:var(--wh)}
 
   <section class="close">
     <h2>You already paid for this data.<br>You may as well <u>read it.</u></h2>
-    <a class="btn btn-r" href="exitliquidity-app.html">Trace a wallet</a>
+    <a class="btn btn-r" href="/app/">Trace a wallet</a>
   </section>
 
   <footer>
-    <span>ExitLiquidity — prototype</span>
+    <span>Fillmark — prototype</span>
     <nav aria-label="Public pages">
-      <a href="exitliquidity-index.html">Extractor index</a>
-      <a href="exitliquidity-leadtime.html">Lead-time radar</a>
-      <a href="exitliquidity-app.html">Console</a>
+      <a href="/extractors/">Extractor index</a>
+      <a href="/lead-time/">Lead-time radar</a>
+      <a href="/app/">Console</a>
       <a href="#method">Method</a>
     </nav>
     <span>Figures on this page are illustrative</span>

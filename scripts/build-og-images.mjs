@@ -18,6 +18,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { MARKS } from './logo-marks.mjs';
+
+/** Kept in step with the pages by scripts/set-logo.mjs. */
+const LOGO_KEY = 'd';
+const LOGO =
+  `<div class="logo"><svg class="mark" viewBox="0 0 24 24" shape-rendering="crispEdges">` +
+  `${MARKS[LOGO_KEY].svg.replace(/\s+/g, ' ').trim()}</svg>FILL<i>MARK</i></div>`;
 
 const OUT = fileURLToPath(new URL('../docs/design/og', import.meta.url));
 
@@ -41,7 +48,7 @@ body{width:1200px;height:630px;background:var(--bk);color:var(--wh);
 .logo{display:flex;align-items:center;gap:12px;font-weight:700;font-size:19px;
   letter-spacing:-.02em;font-variation-settings:'wdth' 108}
 .logo i{font-style:normal;font-weight:300;color:var(--g3)}
-.sq{width:11px;height:11px;background:var(--rd)}
+.mark{width:22px;height:22px;flex:none;display:block}
 h1{font-weight:700;font-variation-settings:'wdth' 104;letter-spacing:-.045em;
   line-height:.98;font-size:74px}
 h1 u{text-decoration:none;color:var(--rd)}
@@ -58,7 +65,7 @@ h1 em{font-style:normal;font-weight:300;color:var(--g2)}
 
 const CARDS = {
   'og.png': SHELL(`
-    <div class="logo"><span class="sq"></span>EXIT<i>LIQUIDITY</i></div>
+    ${LOGO}
     <h1 style="margin-top:52px">Every loss has<br><em>a</em> <u>counterparty.</u></h1>
     <svg viewBox="0 0 1020 150" style="width:100%;margin-top:40px" aria-hidden="true">
       <g fill="#E23B2E">
@@ -77,10 +84,10 @@ const CARDS = {
         <text x="780" y="52" font-size="12" fill="#7E858E">$6,204</text>
         <text x="780" y="98" font-size="15" fill="#A3A9B0">3Fpz…7wLm</text></g>
     </svg>
-    <div class="foot"><span>exitliquidity.xyz</span><span>Illustrative figures</span></div>`),
+    <div class="foot"><span>fillmark.xyz</span><span>Illustrative figures</span></div>`),
 
   'og-index.png': SHELL(`
-    <div class="logo"><span class="sq"></span>EXIT<i>LIQUIDITY</i></div>
+    ${LOGO}
     <div class="kick" style="margin-top:40px">Extractor index · 30 days</div>
     <h1 style="margin-top:22px;font-size:62px">The biggest<br><u>takers</u> on Solana.</h1>
     <div style="margin-top:38px;border-top:1px solid var(--ln2)">
@@ -104,7 +111,7 @@ const CARDS = {
     <div class="foot"><span>$41.8M attributed · top 100</span><span>Illustrative figures</span></div>`),
 
   'og-leadtime.png': SHELL(`
-    <div class="logo"><span class="sq"></span>EXIT<i>LIQUIDITY</i></div>
+    ${LOGO}
     <div class="kick" style="margin-top:40px">Lead-time radar</div>
     <h1 style="margin-top:22px;font-size:62px">Ranked by <u>how early.</u><br><em>Not by how much.</em></h1>
     <svg viewBox="0 0 1020 130" style="width:100%;margin-top:34px" aria-hidden="true">
