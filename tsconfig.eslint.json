@@ -1,0 +1,17 @@
+{
+  "//": "Lint-only project: covers tests and config files, which the build configs exclude so they stay out of dist.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "apps/*/src/**/*.ts",
+    "vitest.config.ts",
+    "eslint.config.js"
+  ]
+}

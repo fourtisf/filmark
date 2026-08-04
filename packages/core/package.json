@@ -1,0 +1,30 @@
+{
+  "name": "@exitliquidity/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared types, constants, config and logging for ExitLiquidity.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly"
+  },
+  "dependencies": {
+    "pino": "^9.13.1",
+    "pino-pretty": "^13.1.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "bs58": "^6.0.0"
+  }
+}

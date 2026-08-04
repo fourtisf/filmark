@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/solana" },
+    { "path": "../../packages/parsers" },
+    { "path": "../../packages/clickhouse" },
+    { "path": "../../packages/pricing" }
+  ],
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+}

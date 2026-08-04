@@ -1,0 +1,31 @@
+{
+  "name": "@exitliquidity/parsers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Venue swap parsers. P0: Pump.fun bonding curve and PumpSwap.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly"
+  },
+  "dependencies": {
+    "@exitliquidity/core": "workspace:*",
+    "@exitliquidity/solana": "workspace:*",
+    "bs58": "^6.0.0"
+  }
+}

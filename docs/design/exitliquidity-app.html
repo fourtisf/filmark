@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ExitLiquidity — console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200;0,6..72,300;0,6..72,400;1,6..72,200;1,6..72,300&family=Inter+Tight:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#08090B;--sur:#0E1013;--sur2:#12151A;
+  --line:#1C2026;--line2:#2A313A;
+  --text:#EDEFF2;--text2:#949BA5;--text3:#59616B;
+  --ext:#C4503E;--ext2:#E0705C;--gold:#C9AE7B;--ok:#5F8F76;
+  --serif:'Newsreader',Georgia,serif;
+  --sans:'Inter Tight',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--void);color:var(--text);font-family:var(--sans);font-size:15px;
+  line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(120% 55% at 50% -18%,rgba(201,174,123,.055),transparent 62%)}
+.w{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:0 44px}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:1px solid var(--gold);outline-offset:4px}
+h1,h2,h3{font-weight:400}
+[hidden]{display:none!important}
+
+/* chrome */
+.top{position:sticky;top:0;z-index:30;background:rgba(8,9,11,.84);
+  backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.top-in{max-width:1120px;margin:0 auto;padding:0 44px;height:62px;
+  display:flex;align-items:center;justify-content:space-between;gap:20px}
+.logo{display:flex;align-items:center;gap:11px;font-weight:600;font-size:13.5px}
+.logo i{font-style:normal;font-weight:300;color:var(--text3)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--ext);
+  box-shadow:0 0 0 4px rgba(196,80,62,.14)}
+.who-bar{font-family:var(--mono);font-size:10.5px;color:var(--text3);
+  letter-spacing:.12em;text-transform:uppercase;text-align:right}
+.who-bar b{display:block;color:var(--gold);font-weight:400;letter-spacing:.04em;
+  text-transform:none;font-size:12px;margin-top:2px}
+.rail{border-bottom:1px solid var(--line);background:rgba(8,9,11,.6);
+  position:sticky;top:62px;z-index:29;backdrop-filter:blur(14px);overflow-x:auto}
+.rail-in{max-width:1120px;margin:0 auto;padding:0 44px;display:flex;gap:30px}
+.nv{padding:15px 0 13px;font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--text3);border-bottom:1px solid transparent;
+  margin-bottom:-1px;white-space:nowrap;transition:.2s}
+.nv:hover{color:var(--text2)}
+.nv[aria-current="true"]{color:var(--text);border-bottom-color:var(--ext)}
+
+/* shared */
+.head{padding:74px 0 0;max-width:720px}
+.kick{font-family:var(--mono);font-size:10px;letter-spacing:.24em;
+  text-transform:uppercase;color:var(--text3);margin-bottom:20px}
+h1{font-family:var(--serif);font-weight:200;font-size:clamp(34px,5.4vw,54px);
+  line-height:1.04;letter-spacing:-.032em}
+h1 em{font-style:italic;color:var(--gold)}
+.lede{margin-top:22px;max-width:540px;color:var(--text2);font-weight:300;font-size:15.5px}
+.sec{padding:84px 0 0}
+.sec-k{font-family:var(--mono);font-size:10px;letter-spacing:.24em;
+  text-transform:uppercase;color:var(--text3);margin-bottom:16px}
+.sec h2{font-family:var(--serif);font-weight:300;font-size:clamp(24px,3.2vw,34px);
+  letter-spacing:-.026em;line-height:1.12}
+.note{margin-top:15px;max-width:540px;color:var(--text2);font-weight:300;font-size:14.5px}
+
+.field{display:flex;background:var(--sur);border:1px solid var(--line);
+  max-width:640px;margin-top:34px;transition:border-color .2s}
+.field:focus-within{border-color:var(--line2)}
+.field input{flex:1;min-width:0;background:none;border:none;color:var(--text);
+  font-family:var(--mono);font-size:13px;padding:0 20px}
+.field input::placeholder{color:var(--text3)}
+.field input:focus{outline:none}
+.go{padding:16px 28px;background:var(--text);color:var(--void);font-weight:600;
+  font-size:12.5px;transition:opacity .2s;white-space:nowrap}
+.go:hover{opacity:.86}
+.go:disabled{opacity:.4;cursor:not-allowed}
+.tries{margin-top:14px;display:flex;flex-wrap:wrap;gap:9px;align-items:center}
+.tries small{font-family:var(--mono);font-size:10px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--text3)}
+.chip{border:1px solid var(--line);padding:7px 13px;font-family:var(--mono);
+  font-size:11.5px;color:var(--text2);transition:.2s}
+.chip:hover{border-color:var(--line2);color:var(--text)}
+.state{margin-top:20px;height:16px;font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--text3)}
+.state i{font-style:normal;color:var(--ext2)}
+
+.empty{margin-top:46px;border:1px dashed var(--line2);padding:44px 34px;max-width:640px}
+.empty p{color:var(--text2);font-weight:300;max-width:420px}
+.empty .go{margin-top:22px;display:inline-block;padding:12px 22px}
+
+.fade{opacity:0;transform:translateY(12px);
+  transition:opacity .6s ease,transform .6s cubic-bezier(.2,.7,.2,1)}
+.fade.in{opacity:1;transform:none}
+
+/* stat strip */
+.sum{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);margin-top:76px}
+.st{padding:28px 24px 30px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.st:last-child{border-right:none}
+.st-l{font-family:var(--mono);font-size:9.5px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--text3)}
+.st-v{font-family:var(--serif);font-weight:300;font-size:clamp(26px,3.4vw,40px);
+  line-height:1;letter-spacing:-.035em;margin-top:15px}
+.st-v.neg{color:var(--ext2)}
+.st-v.pos{color:var(--ok)}
+.st-s{font-family:var(--mono);font-size:10.5px;color:var(--text3);margin-top:10px}
+
+/* flow */
+.flow{margin-top:40px;border:1px solid var(--line);background:var(--sur);padding:8px}
+.sk{display:block;width:100%;height:auto}
+.sk .rb{transition:opacity .3s}
+.sk.dim .rb{opacity:.05}
+.sk.dim .rb.on{opacity:.78}
+.sl{font-family:var(--mono);font-size:12px;fill:var(--text2)}
+.sv{font-family:var(--mono);font-size:10.5px;fill:var(--text3)}
+.sh{font-family:var(--mono);font-size:9.5px;letter-spacing:.2em;fill:var(--text3)}
+.fm{display:none}
+
+/* rows */
+.led{margin-top:38px;border-top:1px solid var(--line)}
+.row{width:100%;display:grid;grid-template-columns:38px 1fr 128px 112px 20px;gap:20px;
+  align-items:center;text-align:left;padding:21px 8px;border-bottom:1px solid var(--line);
+  transition:background .2s}
+.row:hover{background:rgba(237,239,242,.026)}
+.rk{font-family:var(--mono);font-size:11px;color:var(--text3)}
+.who{font-family:var(--mono);font-size:14px}
+.who small{display:block;font-family:var(--sans);font-size:12.5px;font-weight:300;
+  color:var(--text3);margin-top:5px}
+.ov{font-family:var(--mono);font-size:11.5px;color:var(--text2)}
+.amt{font-family:var(--serif);font-weight:300;font-size:22px;color:var(--ext2);
+  text-align:right;letter-spacing:-.03em}
+.car{color:var(--text3);font-size:11px;text-align:center;transition:transform .25s}
+.row[aria-expanded="true"] .car{transform:rotate(90deg)}
+.det{display:grid;grid-template-rows:0fr;border-bottom:1px solid var(--line);
+  transition:grid-template-rows .38s cubic-bezier(.2,.7,.2,1)}
+.det.open{grid-template-rows:1fr}
+.det>div{overflow:hidden;min-height:0}
+.det ul{list-style:none;padding:4px 8px 24px 58px}
+.det li{display:flex;justify-content:space-between;gap:20px;padding:10px 0;
+  border-bottom:1px dashed var(--line);font-family:var(--mono);font-size:12px;color:var(--text2)}
+.det li:last-child{border:none}
+.det li b{font-weight:400;color:var(--text)}
+.det .act{padding:0 8px 24px 58px}
+.det .act button{border:1px solid var(--line2);padding:9px 16px;font-family:var(--mono);
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);transition:.2s}
+.det .act button:hover{color:var(--text);border-color:var(--text3)}
+
+/* verdict */
+.verdict{margin-top:40px;border:1px solid var(--line);background:var(--sur);padding:34px 32px}
+.verdict.flag{border-color:rgba(196,80,62,.55);background:rgba(196,80,62,.07)}
+.verdict.ok{border-color:rgba(95,143,118,.45);background:rgba(95,143,118,.06)}
+.v-tag{font-family:var(--mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--text3)}
+.verdict.flag .v-tag{color:var(--ext2)}
+.verdict.ok .v-tag{color:var(--ok)}
+.v-h{font-family:var(--serif);font-weight:300;font-size:clamp(22px,3vw,30px);
+  letter-spacing:-.025em;margin-top:14px;line-height:1.16}
+.v-n{margin-top:14px;color:var(--text2);font-weight:300;max-width:520px;font-size:14.5px}
+.meta{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);margin-top:26px}
+.meta div{padding:20px 18px;border-right:1px solid var(--line)}
+.meta div:last-child{border-right:none}
+.meta b{display:block;font-family:var(--mono);font-size:13px;font-weight:400;margin-top:9px}
+
+/* traits */
+.traits{list-style:none;margin-top:34px;border-top:1px solid var(--line)}
+.traits li{padding:18px 8px;border-bottom:1px solid var(--line);display:flex;gap:20px;
+  color:var(--text2);font-weight:300}
+.traits li span{font-family:var(--mono);font-size:10.5px;color:var(--text3);
+  min-width:26px;padding-top:3px}
+
+/* watchlist */
+.wl{margin-top:38px;border-top:1px solid var(--line)}
+.wl-r{display:grid;grid-template-columns:1fr 120px 96px;gap:20px;align-items:center;
+  padding:20px 8px;border-bottom:1px solid var(--line)}
+.sw{width:42px;height:23px;border:1px solid var(--line2);position:relative;
+  transition:.22s;justify-self:end}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:15px;height:15px;
+  background:var(--text3);transition:.22s}
+.sw[aria-pressed="true"]{border-color:var(--gold);background:rgba(201,174,123,.14)}
+.sw[aria-pressed="true"]::after{left:21px;background:var(--gold)}
+.feed{margin-top:38px;border:1px solid var(--line);background:var(--sur)}
+.fd{display:grid;grid-template-columns:8px 1fr auto;gap:16px;align-items:center;
+  padding:16px 20px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px}
+.feed .fd:last-child{border:none}
+.fd i{width:6px;height:6px;border-radius:50%;background:var(--text3);display:block}
+.fd.hot i{background:var(--ext2);box-shadow:0 0 0 4px rgba(224,112,92,.14)}
+.fd time{color:var(--text3);font-size:11px}
+
+/* token receipt */
+.split{display:flex;height:52px;margin-top:34px;border:1px solid var(--line)}
+.sp-a{background:linear-gradient(180deg,rgba(196,80,62,.42),rgba(196,80,62,.2));
+  display:flex;align-items:center;padding-left:18px}
+.sp-b{background:linear-gradient(180deg,rgba(201,174,123,.34),rgba(201,174,123,.14));
+  display:flex;align-items:center;justify-content:flex-end;padding-right:18px}
+.split span{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;white-space:nowrap}
+.spk{display:flex;justify-content:space-between;margin-top:11px;font-family:var(--mono);
+  font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)}
+.quad{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);margin-top:36px}
+.q{padding:26px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.q:nth-child(2n){border-right:none}
+.q:nth-last-child(-n+2){border-bottom:none}
+
+/* card */
+.card-stage{margin-top:40px;display:grid;grid-template-columns:1fr 260px;gap:44px;align-items:start}
+.card-box{border:1px solid var(--line);background:var(--sur);padding:20px}
+.card-box svg{display:block;width:100%;height:auto}
+.card-side p{color:var(--text2);font-weight:300;font-size:14px;margin-bottom:22px}
+.card-side button{width:100%;margin-bottom:10px}
+
+/* method */
+.meth{padding:96px 0 0;display:grid;grid-template-columns:210px 1fr;gap:52px}
+.meth p{color:var(--text2);font-weight:300;max-width:620px;margin-bottom:17px;font-size:14.5px}
+.meth p b{color:var(--text);font-weight:400}
+.meth p:last-child{margin-bottom:0}
+footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
+  display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--text3)}
+
+@media (max-width:980px){
+  .w,.top-in,.rail-in{padding:0 24px}
+  .sum,.meta{grid-template-columns:1fr 1fr}
+  .st:nth-child(2n),.meta div:nth-child(2n){border-right:none}
+  .meth{grid-template-columns:1fr;gap:22px}
+  .card-stage{grid-template-columns:1fr;gap:26px}
+  .quad{grid-template-columns:1fr}
+  .q{border-right:none}
+}
+@media (max-width:760px){
+  .sk{display:none}
+  .flow{padding:20px 0 0;background:none;border:none;border-top:1px solid var(--line)}
+  .fm{display:block}
+  .fm-r{padding:20px 0;border-bottom:1px solid var(--line)}
+  .fm-h{display:flex;justify-content:space-between;align-items:baseline;gap:14px}
+  .fm-t{font-family:var(--mono);font-size:13.5px}
+  .fm-v{font-family:var(--serif);font-weight:300;font-size:20px;color:var(--ext2)}
+  .fm-b{display:flex;height:9px;margin-top:14px;gap:2px}
+  .fm-b i{display:block;height:100%}
+  .fm-l{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:12px;
+    font-family:var(--mono);font-size:10.5px;color:var(--text3)}
+  .row{grid-template-columns:28px 1fr auto;gap:14px;row-gap:8px}
+  .ov{grid-column:2/4;order:5;margin-top:-6px}
+  .car{display:none}
+  .det ul,.det .act{padding-left:42px}
+  .wl-r{grid-template-columns:1fr auto;row-gap:8px}
+  .field{flex-direction:column}
+  .field input{padding:16px 18px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}
+  .fade{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<div class="top"><div class="top-in">
+  <div class="logo"><span class="dot"></span>Exit<i>Liquidity</i></div>
+  <div class="who-bar">Active wallet<b id="active">none — run a trace</b></div>
+</div></div>
+
+<div class="rail"><div class="rail-in" id="rail">
+  <button class="nv" data-v="trace" aria-current="true">Trace</button>
+  <button class="nv" data-v="pre">Pre-trade check</button>
+  <button class="nv" data-v="file">Extractor file</button>
+  <button class="nv" data-v="watch">Watchlist</button>
+  <button class="nv" data-v="token">Token receipt</button>
+  <button class="nv" data-v="card">Receipt card</button>
+</div></div>
+
+<div class="w">
+
+<!-- ── TRACE ────────────────────────────── -->
+<section id="v-trace">
+  <div class="head">
+    <div class="kick">Solana · realised positions</div>
+    <h1>Your losses didn't<br>evaporate. They <em>moved.</em></h1>
+    <p class="lede">Paste a wallet. Every position closed in the red gets netted against pool activity in the same window and mapped to the wallets that were reducing supply into it.</p>
+  </div>
+  <div class="field">
+    <input id="addr" type="text" spellcheck="false" autocomplete="off"
+      placeholder="Solana wallet address" aria-label="Solana wallet address">
+    <button class="go" id="go">Trace wallet</button>
+  </div>
+  <div class="tries"><small>Try</small>
+    <button class="chip" data-w="w1">7xKq…9fD3</button>
+    <button class="chip" data-w="w2">4Bnv…Ha7Z</button></div>
+  <div class="state" id="state" role="status" aria-live="polite"></div>
+
+  <div id="out" class="fade" hidden>
+    <div class="sum">
+      <div class="st"><div class="st-l">Net extracted</div>
+        <div class="st-v neg" data-n data-pre="$">$0</div><div class="st-s" id="s1"></div></div>
+      <div class="st"><div class="st-l">Positions closed</div>
+        <div class="st-v" data-n>0</div><div class="st-s" id="s2"></div></div>
+      <div class="st"><div class="st-l">Wallets on the other side</div>
+        <div class="st-v" data-n>0</div><div class="st-s">named below</div></div>
+      <div class="st"><div class="st-l">Single largest</div>
+        <div class="st-v neg" data-n data-pre="$">$0</div><div class="st-s" id="s3"></div></div>
+    </div>
+    <div class="sec"><div class="sec-k">01 — The flow</div><h2>Where it went</h2>
+      <p class="note">Left is what you closed at a loss. Right is who was reducing supply into those same windows. Ribbon thickness is dollars attributed.</p>
+      <div class="flow">
+        <svg class="sk" id="sk" viewBox="0 0 940 460" preserveAspectRatio="xMidYMid meet"
+          role="img" aria-label="Flow of realised losses into counterparty wallets"></svg>
+        <div class="fm" id="fm"></div>
+      </div></div>
+    <div class="sec"><div class="sec-k">02 — The ledger</div><h2>Who is holding it</h2>
+      <p class="note">Hover a row to isolate it in the flow. Open a row for every window it came from, or pin it to your watchlist.</p>
+      <div class="led" id="led"></div></div>
+  </div>
+</section>
+
+<!-- ── PRE-TRADE ────────────────────────── -->
+<section id="v-pre" hidden>
+  <div class="head">
+    <div class="kick">Runs forward, not backward</div>
+    <h1>Check the pool <em>before</em> you're in it.</h1>
+    <p class="lede">Paste a token you're about to enter. If a wallet that has taken from you before is already sitting in that pool, you see it while you can still walk away.</p>
+  </div>
+  <div id="pre-gate" class="empty">
+    <p>Pre-trade check compares a pool against your own counterparty list, so it needs a trace first.</p>
+    <button class="go" data-jump="trace">Run a trace</button>
+  </div>
+  <div id="pre-body" hidden>
+    <div class="field">
+      <input id="tok" type="text" spellcheck="false" autocomplete="off"
+        placeholder="Token ticker or mint address" aria-label="Token">
+      <button class="go" id="tokgo">Check pool</button>
+    </div>
+    <div class="tries"><small>Try</small>
+      <button class="chip" data-t="$DRIFT2">$DRIFT2</button>
+      <button class="chip" data-t="$MEV9">$MEV9</button>
+      <button class="chip" data-t="$COZY">$COZY</button></div>
+    <div class="state" id="tokstate" role="status" aria-live="polite"></div>
+    <div id="preout" class="fade" hidden></div>
+  </div>
+</section>
+
+<!-- ── EXTRACTOR FILE ───────────────────── -->
+<section id="v-file" hidden>
+  <div class="head">
+    <div class="kick">Reverse lookup</div>
+    <h1>Paste them <em>instead</em> of yourself.</h1>
+    <p class="lede">Everything the engine knows about a counterparty: who they've extracted from, how early they get in, which pools they work, and who they're funded alongside.</p>
+  </div>
+  <div class="field">
+    <input id="ext" type="text" spellcheck="false" autocomplete="off"
+      placeholder="Counterparty wallet address" aria-label="Counterparty wallet">
+    <button class="go" id="extgo">Open file</button>
+  </div>
+  <div class="tries"><small>Try</small>
+    <button class="chip" data-f="0">9mQr…4kR8</button>
+    <button class="chip" data-f="1">3Fpz…7wLm</button></div>
+  <div class="state" id="extstate" role="status" aria-live="polite"></div>
+  <div id="extout" class="fade" hidden></div>
+</section>
+
+<!-- ── WATCHLIST ────────────────────────── -->
+<section id="v-watch" hidden>
+  <div class="head">
+    <div class="kick">Pro</div>
+    <h1>The wallet that was early <em>on</em> you<br>becomes the wallet that's early <em>for</em> you.</h1>
+    <p class="lede">Pin the counterparties that keep turning up. Telegram pings the moment one of them opens a position.</p>
+  </div>
+  <div id="watch-gate" class="empty">
+    <p>Your watchlist is built from your own counterparty list, so it needs a trace first.</p>
+    <button class="go" data-jump="trace">Run a trace</button>
+  </div>
+  <div id="watch-body" hidden>
+    <div class="sec" style="padding-top:44px"><div class="sec-k">Pinned</div><h2>Watched wallets</h2>
+      <div class="wl" id="wl"></div></div>
+    <div class="sec"><div class="sec-k">Live</div><h2>Alert feed</h2>
+      <p class="note">Demo feed. In production this is a Telegram push within a few seconds of the fill landing.</p>
+      <div class="feed" id="feed"></div></div>
+  </div>
+</section>
+
+<!-- ── TOKEN RECEIPT ────────────────────── -->
+<section id="v-token" hidden>
+  <div class="head">
+    <div class="kick">$BONKX · 14 Mar — 22 Mar · public page</div>
+    <h1>3,412 wallets funded <em>14</em> wallets.</h1>
+    <p class="lede">Not price action. Actual realised transfer between wallets across the life of the token.</p>
+  </div>
+  <div class="split" role="img" aria-label="3,412 wallets net paid in, 14 wallets net took out">
+    <div class="sp-a" style="flex:0 0 78%"><span>net paid in</span></div>
+    <div class="sp-b" style="flex:1"><span>net taken out</span></div>
+  </div>
+  <div class="spk"><span>3,412 wallets</span><span>14 wallets</span></div>
+  <div class="quad">
+    <div class="q"><div class="st-l">Net transfer</div><div class="st-v neg">$2,141,880</div></div>
+    <div class="q"><div class="st-l">Top extractor share</div><div class="st-v">31.4%</div></div>
+    <div class="q"><div class="st-l">Median loss per funder</div><div class="st-v neg">$627</div></div>
+    <div class="q"><div class="st-l">Broke even or better</div><div class="st-v pos">0.4%</div></div>
+  </div>
+  <div class="sec"><div class="sec-k">Top of the book</div><h2>Who took it</h2>
+    <div class="led" id="tokled"></div></div>
+</section>
+
+<!-- ── RECEIPT CARD ─────────────────────── -->
+<section id="v-card" hidden>
+  <div class="head">
+    <div class="kick">Export</div>
+    <h1>One image. One number.<br>One <em>address.</em></h1>
+    <p class="lede">The card carries the figure, the top counterparty and the window it came from. Nothing else goes on it.</p>
+  </div>
+  <div id="card-gate" class="empty">
+    <p>The card is generated from a trace, so it needs one first.</p>
+    <button class="go" data-jump="trace">Run a trace</button>
+  </div>
+  <div id="card-body" class="card-stage" hidden>
+    <div class="card-box" id="cardbox"></div>
+    <div class="card-side">
+      <p>Downloads as SVG so the type stays sharp at any size. Convert to PNG on export in production.</p>
+      <button class="go" id="dl">Download card</button>
+      <button class="go" id="cp" style="background:none;border:1px solid var(--line2);color:var(--text)">Copy markup</button>
+      <div class="state" id="cardstate" style="margin-top:14px"></div>
+    </div>
+  </div>
+</section>
+
+<section class="meth">
+  <div class="sec-k" style="margin:0">Method</div>
+  <div>
+    <p>On an AMM you don't trade against a person, you trade against a pool. No tool can prove wallet A handed money to wallet B, and anything claiming otherwise is selling certainty it doesn't have.</p>
+    <p>ExitLiquidity measures <b>overlap</b>. Per pool, buys and sells are netted inside a short window. A wallet reducing supply into the window your position opened is attributed a share of that supply, weighted by size. Every row carries its window, so the attribution is checkable rather than asserted.</p>
+    <p>Realised profit and loss only — open positions are excluded, because an unrealised loss hasn't paid anyone yet.</p>
+  </div>
+</section>
+
+<footer><span>ExitLiquidity — prototype</span><span>All figures shown are demo data</span></footer>
+</div>
+
+<script>
+/* ── data ─────────────────────────────── */
+const DATA={
+w1:{addr:"7xKq4mNvB2tRsW8pLcYzE1uHgJ6dQaXn9fD3",short:"7xKq…9fD3",span:"since Jan 2026",closed:34,
+ preds:[{a:"9mQr…4kR8",tag:"Deployer-adjacent · 41 launches"},
+        {a:"3Fpz…7wLm",tag:"Repeat early seller"},
+        {a:"Bk2v…QsN1",tag:"Bundle cluster · 9 wallets"},
+        {a:"Ht9c…Zx4B",tag:"First buyer, first out"},
+        {a:"6Ldw…Mv3T",tag:"Unlabelled"}],
+ links:[{t:"$WIFHAT",p:0,v:2110,w:"06 Apr 22:41"},{t:"$WIFHAT",p:1,v:3405,w:"07 Apr 01:20"},
+        {t:"$WIFHAT",p:2,v:1900,w:"07 Apr 03:02"},{t:"$BONKX",p:0,v:2880,w:"14 Mar 09:12"},
+        {t:"$BONKX",p:2,v:640,w:"14 Mar 09:12"},{t:"$BONKX",p:4,v:582,w:"15 Mar 11:44"},
+        {t:"$SOLAI",p:0,v:1214,w:"19 Apr 03:55"},{t:"$SOLAI",p:3,v:1322,w:"19 Apr 03:51"},
+        {t:"$SOLAI",p:2,v:334,w:"19 Apr 04:02"},{t:"$MOONR",p:1,v:1525,w:"02 May 16:08"},
+        {t:"$MOONR",p:3,v:115,w:"02 May 15:59"},{t:"$PEPE2",p:4,v:614,w:"11 May 12:40"},
+        {t:"$PEPE2",p:3,v:246,w:"11 May 12:37"}]},
+w2:{addr:"4BnvKp7sRtY2xQmLd9WcEuZa5HgJ3oVfHa7Z",short:"4Bnv…Ha7Z",span:"since Sep 2025",closed:112,
+ preds:[{a:"Qw8x…2pRv",tag:"Insider timing · buys 38s pre-pump"},
+        {a:"Ms4t…Kd9J",tag:"Repeat early seller"},
+        {a:"Zn7b…Ry5C",tag:"Bundle cluster · 14 wallets"},
+        {a:"Vd2m…Ln8Q",tag:"Unlabelled"}],
+ links:[{t:"$GIGAC",p:0,v:8900,w:"24 Jan 07:03"},{t:"$GIGAC",p:1,v:5600,w:"25 Jan 12:47"},
+        {t:"$GIGAC",p:2,v:1200,w:"26 Jan 05:12"},{t:"$RETARD",p:1,v:3710,w:"27 Feb 21:09"},
+        {t:"$RETARD",p:2,v:4120,w:"27 Feb 20:58"},{t:"$RETARD",p:3,v:900,w:"28 Feb 02:14"},
+        {t:"$FLOKI9",p:0,v:3410,w:"16 Feb 19:22"},{t:"$FLOKI9",p:2,v:2320,w:"17 Feb 02:31"},
+        {t:"$BONKX",p:0,v:2510,w:"20 Mar 08:15"},{t:"$BONKX",p:3,v:1370,w:"21 Mar 09:40"}]}};
+
+const POOLS={
+ "$DRIFT2":{age:"launched 6 min ago",lp:"$84,200",holders:412,mig:"Pump.fun · not migrated",
+   inPool:[{p:0,pct:"4.1%",entry:"41s after launch",size:"$18,400"},
+           {p:2,pct:"2.3%",entry:"2m 14s after launch",size:"$9,900"}]},
+ "$MEV9":{age:"launched 3h ago",lp:"$212,800",holders:1904,mig:"Raydium CPMM",
+   inPool:[{p:1,pct:"1.2%",entry:"18m after launch",size:"$4,600"}]},
+ "$COZY":{age:"launched 2d ago",lp:"$640,100",holders:8820,mig:"Meteora DLMM",inPool:[]}};
+
+const FILES=[
+ {a:"9mQr…4kR8",label:"Deployer-adjacent",
+  stats:[["Wallets extracted from","1,284"],["Total attributed","$2.14M"],
+         ["Median lead time","41s"],["Pools worked","96"]],
+  traits:["Enters inside the first 60 seconds on 78% of positions.",
+          "Exits in tranches across 3 to 9 addresses rather than one sell.",
+          "Shares a funding source with 9 wallets that trade the same pools.",
+          "Has never held a position longer than 4 hours."],
+  recent:[["$DRIFT2","holding 4.1%","6 min ago"],["$MEV9","exited full","3h ago"],
+          ["$SOLAI","exited full","19 Apr"],["$BONKX","exited full","14 Mar"]]},
+ {a:"3Fpz…7wLm",label:"Repeat early seller",
+  stats:[["Wallets extracted from","412"],["Total attributed","$680K"],
+         ["Median lead time","3m 12s"],["Pools worked","31"]],
+  traits:["Sells the first 30% of a position within 10 minutes of entry.",
+          "Concentrates on tokens migrating out of a bonding curve.",
+          "No detectable funding cluster."],
+  recent:[["$MEV9","holding 1.2%","3h ago"],["$MOONR","exited full","02 May"],
+          ["$WIFHAT","exited full","07 Apr"]]}];
+
+const FEED=[
+ {hot:1,txt:"9mQr…4kR8 opened $DRIFT2 · $18,400",t:"4s ago"},
+ {hot:1,txt:"Bk2v…QsN1 opened $DRIFT2 · $9,900",t:"2m ago"},
+ {hot:0,txt:"3Fpz…7wLm added 40% to $MEV9",t:"3h ago"},
+ {hot:0,txt:"Ht9c…Zx4B exited $SOLAI in full",t:"yesterday"},
+ {hot:0,txt:"6Ldw…Mv3T no activity for 6 days",t:"—"}];
+
+/* ── helpers ──────────────────────────── */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const usd=n=>"$"+Math.round(n).toLocaleString("en-US");
+let M=null, ACTIVE=null, PINNED=new Set([0,1,2]);
+
+function build(d){
+  const tOrder=[],tMap={};
+  d.links.forEach(l=>{if(!(l.t in tMap)){tMap[l.t]={n:l.t,v:0,ls:[]};tOrder.push(tMap[l.t])}
+    tMap[l.t].v+=l.v;tMap[l.t].ls.push(l)});
+  const preds=d.preds.map((p,i)=>({...p,i,v:0,ls:[]}));
+  d.links.forEach(l=>{preds[l.p].v+=l.v;preds[l.p].ls.push(l)});
+  tOrder.sort((a,b)=>b.v-a.v);
+  const ranked=[...preds].sort((a,b)=>b.v-a.v);
+  return {d,tOrder,preds,ranked,net:tOrder.reduce((s,t)=>s+t.v,0)};
+}
+
+/* ── flow ─────────────────────────────── */
+function sankey(m){
+  const sk=$("#sk"),H=460,padY=34,gap=16,bw=6,xL=250,xR=674;
+  const kL=(H-padY*2-gap*(m.tOrder.length-1))/m.net;
+  const kR=(H-padY*2-gap*(m.ranked.length-1))/m.net;
+  let y=padY;m.tOrder.forEach(t=>{t.y0=y;t.h=t.v*kL;t.cur=y;y+=t.h+gap});
+  y=padY;m.ranked.forEach(p=>{p.y0=y;p.h=p.v*kR;p.cur=y;y+=p.h+gap});
+  let s=`<text class="sh" x="${xL}" y="20" text-anchor="end">CLOSED AT A LOSS</text>
+         <text class="sh" x="${xR+bw}" y="20">ATTRIBUTED TO</text>`,rb=[];
+  m.tOrder.forEach(t=>{
+    [...t.ls].sort((a,b)=>m.ranked.findIndex(p=>p.i===a.p)-m.ranked.findIndex(p=>p.i===b.p))
+    .forEach(l=>{
+      const p=m.ranked.find(q=>q.i===l.p),ha=l.v*kL,hb=l.v*kR;
+      const a0=t.cur,a1=t.cur+ha,b0=p.cur,b1=p.cur+hb;t.cur+=ha;p.cur+=hb;
+      const x0=xL+bw,x1=xR,mx=(x0+x1)/2;
+      const op=Math.min(.62,.16+(l.v/m.net)*2.1);
+      rb.push(`<path class="rb" data-p="${l.p}" fill="var(--ext)" opacity="${op.toFixed(3)}"
+        d="M${x0},${a0} C${mx},${a0} ${mx},${b0} ${x1},${b0} L${x1},${b1} C${mx},${b1} ${mx},${a1} ${x0},${a1} Z"/>`);
+    });
+  });
+  s+=rb.join("");
+  m.tOrder.forEach(t=>{s+=`<rect x="${xL}" y="${t.y0}" width="${bw}" height="${t.h}" fill="var(--ext2)"/>
+    <text class="sl" x="${xL-16}" y="${t.y0+t.h/2-2}" text-anchor="end">${t.n}</text>
+    <text class="sv" x="${xL-16}" y="${t.y0+t.h/2+13}" text-anchor="end">−${usd(t.v)}</text>`});
+  m.ranked.forEach(p=>{s+=`<rect x="${xR}" y="${p.y0}" width="${bw}" height="${p.h}" fill="var(--gold)"/>
+    <text class="sl" x="${xR+18}" y="${p.y0+p.h/2-2}">${p.a}</text>
+    <text class="sv" x="${xR+18}" y="${p.y0+p.h/2+13}">${usd(p.v)}</text>`});
+  sk.innerHTML=s;
+  $("#fm").innerHTML=m.tOrder.map(t=>`<div class="fm-r">
+    <div class="fm-h"><span class="fm-t">${t.n}</span><span class="fm-v">−${usd(t.v)}</span></div>
+    <div class="fm-b">${t.ls.map(l=>`<i style="flex:${l.v};background:var(--ext);opacity:${(.35+.55*(l.v/t.v)).toFixed(2)}"></i>`).join("")}</div>
+    <div class="fm-l">${t.ls.map(l=>`<span>${m.preds[l.p].a} · ${usd(l.v)}</span>`).join("")}</div>
+  </div>`).join("");
+}
+
+function ledger(m){
+  $("#led").innerHTML=m.ranked.map((p,i)=>`
+   <button class="row" data-p="${p.i}" data-d="d${i}" aria-expanded="false">
+     <span class="rk">${String(i+1).padStart(2,"0")}</span>
+     <span class="who">${p.a}<small>${p.tag}</small></span>
+     <span class="ov">${p.ls.length} overlap${p.ls.length>1?"s":""}</span>
+     <span class="amt">${usd(p.v)}</span><span class="car">›</span></button>
+   <div class="det" id="d${i}"><div>
+     <ul>${[...p.ls].sort((a,b)=>b.v-a.v).map(l=>
+       `<li><span>${l.t} · ${l.w}</span><b>${usd(l.v)}</b></li>`).join("")}</ul>
+     <div class="act"><button data-pin="${p.i}">Pin to watchlist</button></div>
+   </div></div>`).join("");
+  $$("#led .row").forEach(b=>{
+    b.addEventListener("click",()=>{const el=$("#"+b.dataset.d);
+      b.setAttribute("aria-expanded",el.classList.toggle("open"))});
+    b.addEventListener("mouseenter",()=>{const sk=$("#sk");sk.classList.add("dim");
+      $$("#sk .rb").forEach(r=>r.classList.toggle("on",r.dataset.p===b.dataset.p))});
+    b.addEventListener("mouseleave",()=>$("#sk").classList.remove("dim"));
+  });
+  $$("#led [data-pin]").forEach(b=>b.addEventListener("click",e=>{
+    e.stopPropagation();PINNED.add(+b.dataset.pin);b.textContent="Pinned ✓";renderWatch();}));
+}
+
+function count(el,to){
+  const pre=el.dataset.pre||"",t0=performance.now();
+  (function s(t){const k=Math.min((t-t0)/900,1),e=1-Math.pow(1-k,3);
+    el.textContent=pre+Math.round(to*e).toLocaleString("en-US");if(k<1)requestAnimationFrame(s)})(t0);
+}
+
+/* ── trace ────────────────────────────── */
+let busy=false;
+function trace(key){
+  if(busy)return;
+  if(!key){const v=$("#addr").value.trim();
+    if(!v){$("#state").textContent="Paste a wallet address first";$("#addr").focus();return}
+    key=Object.keys(DATA).find(k=>DATA[k].addr===v)||"w1"}
+  busy=true;$("#go").disabled=true;$("#out").classList.remove("in");
+  $("#state").innerHTML="Netting pool windows… <i>reading closed positions</i>";
+  setTimeout(()=>{
+    const d=DATA[key];M=build(d);ACTIVE=key;
+    $("#active").textContent=d.short;
+    sankey(M);ledger(M);
+    $("#s1").textContent=d.span;
+    $("#s2").textContent=M.tOrder.length+" closed in the red";
+    $("#s3").textContent=M.ranked[0].a;
+    $("#out").hidden=false;
+    const vals=[M.net,d.closed,M.ranked.length,M.ranked[0].v];
+    $$("#out .st-v[data-n]").forEach((el,i)=>count(el,vals[i]));
+    requestAnimationFrame(()=>$("#out").classList.add("in"));
+    $("#state").innerHTML="Trace complete · <i>"+d.closed+" positions read</i>";
+    PINNED=new Set(M.ranked.slice(0,3).map(p=>p.i));
+    unlock();busy=false;$("#go").disabled=false;
+  },820);
+}
+
+function unlock(){
+  ["pre","watch","card"].forEach(k=>{$("#"+k+"-gate").hidden=true;$("#"+k+"-body").hidden=false});
+  renderWatch();renderCard();renderTokLed();
+}
+
+/* ── pre-trade ────────────────────────── */
+function checkPool(tk){
+  const st=$("#tokstate"),box=$("#preout");
+  const p=POOLS[tk.toUpperCase()]||POOLS[("$"+tk).toUpperCase()];
+  if(!p){st.textContent="No pool found for that token";box.hidden=true;return}
+  st.innerHTML="Cross-referencing your counterparty list…";
+  box.classList.remove("in");
+  setTimeout(()=>{
+    const hits=p.inPool,n=hits.length;
+    const cls=n>1?"flag":n===1?"":"ok";
+    const head=n===0?"None of your counterparties are in this pool."
+      :n===1?"One of your counterparties is already in this pool."
+      :`${n} of your counterparties are already in this pool.`;
+    const note=n===0?"That is not a safety rating. It only means nobody who has previously taken from you is holding here right now."
+      :"These wallets have been on the other side of your closed positions before. They are in this pool now.";
+    box.innerHTML=`<div class="verdict ${cls}">
+      <div class="v-tag">${n>1?"Flagged":n===1?"Caution":"Clear"}</div>
+      <div class="v-h">${head}</div><p class="v-n">${note}</p></div>
+      <div class="meta">
+        <div><div class="st-l">Pool age</div><b>${p.age}</b></div>
+        <div><div class="st-l">Liquidity</div><b>${p.lp}</b></div>
+        <div><div class="st-l">Holders</div><b>${p.holders.toLocaleString()}</b></div>
+        <div><div class="st-l">Venue</div><b>${p.mig}</b></div>
+      </div>
+      ${n?`<div class="sec" style="padding-top:56px"><div class="sec-k">In this pool now</div>
+        <h2>Who you're buying alongside</h2><div class="led">${
+        hits.map((h,i)=>{const pr=M.ranked.find(x=>x.i===h.p)||M.preds[h.p];return `
+          <div class="row" style="cursor:default">
+            <span class="rk">${String(i+1).padStart(2,"0")}</span>
+            <span class="who">${pr.a}<small>took ${usd(pr.v)} from you across ${pr.ls.length} window${pr.ls.length>1?"s":""}</small></span>
+            <span class="ov">${h.entry}</span><span class="amt">${h.size}</span><span></span>
+          </div>`}).join("")}</div>
+        <p class="note" style="margin-top:22px">Position sizes are current, not realised. They tell you who is standing in front of you, not what they will do next.</p></div>`:""}`;
+    box.hidden=false;requestAnimationFrame(()=>box.classList.add("in"));
+    st.innerHTML="Checked · <i>"+(n?n+" match"+(n>1?"es":""):"no matches")+"</i>";
+  },620);
+}
+
+/* ── extractor file ───────────────────── */
+function openFile(idx){
+  const f=FILES[idx];if(!f)return;
+  const st=$("#extstate"),box=$("#extout");
+  st.innerHTML="Assembling file…";box.classList.remove("in");
+  setTimeout(()=>{
+    box.innerHTML=`<div class="sum" style="margin-top:56px">${
+      f.stats.map(s=>`<div class="st"><div class="st-l">${s[0]}</div>
+        <div class="st-v">${s[1]}</div></div>`).join("")}</div>
+      <div class="sec"><div class="sec-k">${f.label}</div><h2>${f.a}</h2>
+        <p class="note">Behaviour observed across every pool the engine has indexed for this address.</p>
+        <ul class="traits">${f.traits.map((t,i)=>
+          `<li><span>${String(i+1).padStart(2,"0")}</span>${t}</li>`).join("")}</ul></div>
+      <div class="sec"><div class="sec-k">Recent</div><h2>Where they've been</h2>
+        <div class="led">${f.recent.map(r=>`<div class="row" style="grid-template-columns:1fr 160px 140px;cursor:default">
+          <span class="who">${r[0]}</span><span class="ov">${r[1]}</span>
+          <span class="ov" style="text-align:right">${r[2]}</span></div>`).join("")}</div></div>`;
+    box.hidden=false;requestAnimationFrame(()=>box.classList.add("in"));
+    st.innerHTML="File open · <i>"+f.label.toLowerCase()+"</i>";
+  },620);
+}
+
+/* ── watchlist ────────────────────────── */
+function renderWatch(){
+  if(!M)return;
+  $("#wl").innerHTML=M.ranked.map(p=>`
+    <div class="wl-r"><span class="who">${p.a}<small>${p.tag}</small></span>
+      <span class="ov">${usd(p.v)} taken</span>
+      <button class="sw" data-w="${p.i}" aria-pressed="${PINNED.has(p.i)}"
+        aria-label="Alerts for ${p.a}"></button></div>`).join("");
+  $$("#wl .sw").forEach(b=>b.addEventListener("click",()=>{
+    const i=+b.dataset.w;PINNED.has(i)?PINNED.delete(i):PINNED.add(i);
+    b.setAttribute("aria-pressed",PINNED.has(i))}));
+  $("#feed").innerHTML=FEED.map(f=>`<div class="fd ${f.hot?"hot":""}">
+    <i></i><span>${f.txt}</span><time>${f.t}</time></div>`).join("");
+}
+
+/* ── token receipt ────────────────────── */
+function renderTokLed(){
+  const rows=[["9mQr…4kR8","31.4%","$672,400"],["Bk2v…QsN1","18.9%","$404,800"],
+    ["Ht9c…Zx4B","11.2%","$239,900"],["6Ldw…Mv3T","7.4%","$158,500"]];
+  $("#tokled").innerHTML=rows.map((r,i)=>`<div class="row" style="grid-template-columns:38px 1fr 120px 140px;cursor:default">
+    <span class="rk">${String(i+1).padStart(2,"0")}</span><span class="who">${r[0]}</span>
+    <span class="ov">${r[1]} of take</span><span class="amt">${r[2]}</span></div>`).join("");
+}
+
+/* ── receipt card ─────────────────────── */
+function cardSVG(){
+  const top=M.ranked[0];
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="640" height="640">
+<rect width="640" height="640" fill="#08090B"/>
+<rect x="1" y="1" width="638" height="638" fill="none" stroke="#1C2026"/>
+<circle cx="56" cy="58" r="4" fill="#C4503E"/>
+<text x="72" y="63" font-family="Inter Tight,sans-serif" font-size="15" font-weight="600" fill="#EDEFF2">ExitLiquidity</text>
+<text x="56" y="240" font-family="JetBrains Mono,monospace" font-size="12" letter-spacing="3" fill="#59616B">NET EXTRACTED</text>
+<text x="56" y="330" font-family="Newsreader,Georgia,serif" font-size="96" fill="#E0705C">${usd(M.net)}</text>
+<line x1="56" y1="382" x2="584" y2="382" stroke="#1C2026"/>
+<text x="56" y="420" font-family="JetBrains Mono,monospace" font-size="12" letter-spacing="3" fill="#59616B">LARGEST COUNTERPARTY</text>
+<text x="56" y="458" font-family="JetBrains Mono,monospace" font-size="22" fill="#C9AE7B">${top.a}</text>
+<text x="56" y="488" font-family="Inter Tight,sans-serif" font-size="15" fill="#949BA5">${usd(top.v)} across ${top.ls.length} windows · ${top.tag}</text>
+<text x="56" y="576" font-family="JetBrains Mono,monospace" font-size="11" letter-spacing="2" fill="#59616B">WALLET ${M.d.short} · ${M.d.closed} POSITIONS READ</text>
+<text x="584" y="576" font-family="JetBrains Mono,monospace" font-size="11" letter-spacing="2" fill="#59616B" text-anchor="end">DEMO DATA</text>
+</svg>`;
+}
+function renderCard(){ $("#cardbox").innerHTML=cardSVG(); }
+
+$("#dl").addEventListener("click",()=>{
+  const b=new Blob([cardSVG()],{type:"image/svg+xml"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);
+  a.download="exitliquidity-"+M.d.short.replace(/…/g,"-")+".svg";a.click();
+  URL.revokeObjectURL(a.href);$("#cardstate").innerHTML="Downloaded";
+});
+$("#cp").addEventListener("click",async()=>{
+  try{await navigator.clipboard.writeText(cardSVG());$("#cardstate").innerHTML="Copied to clipboard"}
+  catch{$("#cardstate").innerHTML="Clipboard blocked — use download"}
+});
+
+/* ── router + wiring ──────────────────── */
+function show(v){
+  $$(".nv").forEach(b=>b.setAttribute("aria-current",b.dataset.v===v));
+  ["trace","pre","file","watch","token","card"].forEach(k=>$("#v-"+k).hidden=(k!==v));
+  window.scrollTo({top:0,behavior:"instant"});
+}
+$$(".nv").forEach(b=>b.addEventListener("click",()=>show(b.dataset.v)));
+$$("[data-jump]").forEach(b=>b.addEventListener("click",()=>show(b.dataset.jump)));
+$$(".chip[data-w]").forEach(c=>c.addEventListener("click",()=>{
+  $("#addr").value=DATA[c.dataset.w].addr;trace(c.dataset.w)}));
+$("#go").addEventListener("click",()=>trace());
+$("#addr").addEventListener("keydown",e=>{if(e.key==="Enter")trace()});
+$$(".chip[data-t]").forEach(c=>c.addEventListener("click",()=>{
+  $("#tok").value=c.dataset.t;checkPool(c.dataset.t)}));
+$("#tokgo").addEventListener("click",()=>checkPool($("#tok").value.trim()));
+$("#tok").addEventListener("keydown",e=>{if(e.key==="Enter")checkPool($("#tok").value.trim())});
+$$(".chip[data-f]").forEach(c=>c.addEventListener("click",()=>{
+  $("#ext").value=FILES[c.dataset.f].a;openFile(+c.dataset.f)}));
+$("#extgo").addEventListener("click",()=>{
+  const v=$("#ext").value.trim();const i=FILES.findIndex(f=>f.a===v);
+  i>=0?openFile(i):openFile(0)});
+renderTokLed();
+</script>
+</body>
+</html>

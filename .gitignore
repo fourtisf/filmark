@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+coverage/
+.clickhouse-data/
+.redis-data/
+*.log
+.DS_Store
+.vitest/

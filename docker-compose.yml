@@ -1,0 +1,46 @@
+# Local dependencies for P0. Development only — no volumes are configured for
+# production use and no credentials here are secret.
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3-alpine
+    container_name: exitliquidity-clickhouse
+    ports:
+      - '8123:8123' # HTTP, what @clickhouse/client uses
+      - '9000:9000' # native protocol, for clickhouse-client
+    environment:
+      CLICKHOUSE_DB: exitliquidity
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ''
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+    ulimits:
+      # ClickHouse opens a file per part and hits the default limit under any
+      # real insert load.
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:8123/ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    container_name: exitliquidity-redis
+    ports:
+      - '6379:6379'
+    # BullMQ needs keyspace notifications for delayed and stalled jobs.
+    command: redis-server --appendonly yes --notify-keyspace-events Ex
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  clickhouse-data:
+  redis-data:

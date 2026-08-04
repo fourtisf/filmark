@@ -1,0 +1,10 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+# Native/postinstall builds we explicitly trust. esbuild backs vitest and tsx;
+# protobufjs and msgpackr-extract come in under the gRPC and BullMQ clients.
+onlyBuiltDependencies:
+  - esbuild
+  - msgpackr-extract
+  - protobufjs

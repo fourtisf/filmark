@@ -1,0 +1,27 @@
+{
+  "name": "@exitliquidity/clickhouse",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ClickHouse client, migrations and repositories for the swap store.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly"
+  },
+  "dependencies": {
+    "@clickhouse/client": "^1.12.1",
+    "@exitliquidity/core": "workspace:*"
+  }
+}
