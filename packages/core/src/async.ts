@@ -96,10 +96,19 @@ export class RateLimiter {
     this.#intervalMs = 1000 / requestsPerSecond;
   }
 
-  async acquire(signal?: AbortSignal): Promise<void> {
+  /**
+   * `cost` is how many units of the limit this acquisition spends.
+   *
+   * Providers meter RPC calls, not HTTP requests. A JSON-RPC batch of twenty is
+   * one connection and twenty calls, so charging it as one would multiply the
+   * configured rate by the batch size — which is a rate limiter that raises the
+   * rate.
+   */
+  async acquire(signal?: AbortSignal, cost = 1): Promise<void> {
+    if (cost < 1) throw new RangeError('cost must be >= 1');
     const now = Date.now();
     const scheduled = Math.max(now, this.#next);
-    this.#next = scheduled + this.#intervalMs;
+    this.#next = scheduled + this.#intervalMs * cost;
     const wait = scheduled - now;
     if (wait > 0) await sleep(wait, signal);
   }

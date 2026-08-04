@@ -226,6 +226,23 @@ describe('RateLimiter', () => {
   it('rejects a rate of zero', () => {
     expect(() => new RateLimiter(0)).toThrow(RangeError);
   });
+
+  it('charges a batch for every call it carries, not for the one request', async () => {
+    // Batching turned a 10/s limit into 200/s: one HTTP request charged once,
+    // carrying twenty RPC calls, against a provider that meters calls. The
+    // limiter was raising the rate it existed to hold down.
+    const limiter = new RateLimiter(100); // 10ms per unit
+    await limiter.acquire(undefined, 20); // 200ms of budget spent
+
+    const started = Date.now();
+    await limiter.acquire();
+
+    expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+  });
+
+  it('rejects a cost below one', async () => {
+    await expect(new RateLimiter(10).acquire(undefined, 0)).rejects.toThrow(RangeError);
+  });
 });
 
 describe('mapWithConcurrency', () => {

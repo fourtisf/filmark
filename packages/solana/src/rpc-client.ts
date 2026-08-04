@@ -235,6 +235,7 @@ export class SolanaRpcClient {
         });
       },
       signal,
+      requests.length,
     );
   }
 
@@ -293,11 +294,14 @@ export class SolanaRpcClient {
     payload: unknown,
     parse: (body: unknown, attempt: number) => T,
     signal?: AbortSignal,
+    cost = 1,
   ): Promise<T> {
     const method = label;
     return retry(
       async (attempt) => {
-        await this.#limiter.acquire(signal);
+        // Charged per RPC call, not per request: a batch of twenty spends
+        // twenty units, because that is what the provider counts.
+        await this.#limiter.acquire(signal, cost);
         const controller = new AbortController();
         const timer = setTimeout(() => {
           controller.abort();
