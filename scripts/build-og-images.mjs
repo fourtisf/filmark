@@ -18,10 +18,9 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { MARKS } from './logo-marks.mjs';
+import { MARKS, CURRENT } from './logo-marks.mjs';
 
-/** Kept in step with the pages by scripts/set-logo.mjs. */
-const LOGO_KEY = 'd';
+const LOGO_KEY = CURRENT;
 const LOGO =
   `<div class="logo"><svg class="mark" viewBox="0 0 24 24" shape-rendering="crispEdges">` +
   `${MARKS[LOGO_KEY].svg.replace(/\s+/g, ' ').trim()}</svg>FILL<i>MARK</i></div>`;

@@ -54,5 +54,15 @@ for (const file of pages) {
 await writeFile(`${DESIGN}/favicon.svg`, FAVICON);
 console.log('  favicon.svg');
 
+// Record the choice where the OG generator reads it, so the cards and the
+// pages cannot end up carrying different marks.
+const marksPath = fileURLToPath(new URL('./logo-marks.mjs', import.meta.url));
+const marksSource = await readFile(marksPath, 'utf8');
+await writeFile(
+  marksPath,
+  marksSource.replace(/export const CURRENT = '[a-z]';/, `export const CURRENT = '${key}';`),
+);
+console.log('  logo-marks.mjs (CURRENT)');
+
 console.log(`\nMark ${key.toUpperCase()} (${MARKS[key].name}) applied to ${touched} pages.`);
 console.log('Run  node scripts/build-og-images.mjs  then  node scripts/build-site.mjs');

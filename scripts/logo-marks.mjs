@@ -8,6 +8,9 @@
  * Every mark is a 24x24 viewBox built from rectangles — §3 allows no radius,
  * no gradient and one accent, and rectangles stay crisp at favicon size.
  */
+/** The mark currently in use. Rewritten by scripts/set-logo.mjs. */
+export const CURRENT = 'e';
+
 const RD = '#E23B2E';
 const G = '#7E858E';
 
