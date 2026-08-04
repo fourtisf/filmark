@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Extractor index — the biggest takers on Solana | ExitLiquidity</title>
+<meta name="description" content="Solana wallets ranked by dollars taken out of other people's closed positions, over 7, 30 and 90 days. Free, no account, every figure carries the window it came from.">
+<link rel="canonical" href="https://exitliquidity.xyz/index/30d">
+<meta name="theme-color" content="#060607">
+<meta name="color-scheme" content="dark">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ExitLiquidity">
+<meta property="og:url" content="https://exitliquidity.xyz/index/30d">
+<meta property="og:title" content="The biggest takers on Solana, ranked">
+<meta property="og:description" content="Wallets ranked by dollars attributed out of other people's realised losses. 7, 30 and 90 days. No account needed.">
+<meta property="og:image" content="https://exitliquidity.xyz/og-index.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The biggest takers on Solana, ranked">
+<meta name="twitter:description" content="Wallets ranked by dollars attributed out of other people's realised losses.">
+<meta name="twitter:image" content="https://exitliquidity.xyz/og-index.png">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060607'/%3E%3Crect x='12' y='12' width='8' height='8' fill='%23E23B2E'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bk:#060607;--s1:#0B0C0E;--s2:#111316;
+  --ln:#1B1E22;--ln2:#2A2F35;
+  --wh:#F5F6F7;--g1:#A3A9B0;--g2:#6B727A;--g3:#464C53;
+  --rd:#E23B2E;
+  --sans:'Archivo',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{background:var(--bk);color:var(--wh);font-family:var(--sans);font-size:15px;
+  line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:1px solid var(--rd);outline-offset:4px}
+h1,h2,h3{font-weight:400}
+.skip{position:absolute;left:-9999px;top:0;z-index:60;background:var(--wh);color:var(--bk);
+  padding:12px 20px;font-weight:600;font-size:12.5px}
+.skip:focus{left:0}
+
+.rule{position:fixed;inset:0;z-index:0;pointer-events:none;display:flex;justify-content:center}
+.rule>div{width:100%;max-width:1180px;padding:0 44px;height:100%;
+  display:grid;grid-template-columns:repeat(6,1fr)}
+.rule i{border-left:1px solid rgba(245,246,247,.026);height:100%}
+.rule i:last-child{border-right:1px solid rgba(245,246,247,.026)}
+.w{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 44px}
+
+.nav{position:sticky;top:0;z-index:40;background:rgba(6,6,7,.9);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--ln)}
+.nav-in{max-width:1180px;margin:0 auto;padding:0 44px;height:64px;
+  display:flex;align-items:center;justify-content:space-between;gap:24px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:13.5px;
+  letter-spacing:-.02em;font-variation-settings:'wdth' 108}
+.logo i{font-style:normal;font-weight:300;color:var(--g3)}
+.sq{width:7px;height:7px;background:var(--rd)}
+.nav-l{display:flex;align-items:center;gap:28px;font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--g2)}
+.nav-l a:hover{color:var(--wh)}
+.nav-l a[aria-current="page"]{color:var(--wh)}
+.btn{padding:11px 22px;background:var(--wh);color:var(--bk);font-weight:600;
+  font-size:12.5px;display:inline-block;transition:background .18s}
+.btn:hover{background:#fff}
+.btn-r{background:var(--rd);color:#fff}
+.btn-r:hover{background:#F04A3C}
+.btn-o{background:none;color:var(--wh);border:1px solid var(--ln2)}
+.btn-o:hover{border-color:var(--g3)}
+
+/* ── head ── */
+.head{padding:84px 0 0;max-width:760px}
+.kick{font-family:var(--mono);font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;
+  color:var(--g3);margin-bottom:26px;display:flex;align-items:center;gap:12px}
+.kick::before{content:"";width:26px;height:1px;background:var(--rd)}
+h1{font-size:clamp(36px,6vw,68px);line-height:1;letter-spacing:-.045em;
+  font-weight:700;font-variation-settings:'wdth' 104}
+h1 u{text-decoration:none;color:var(--rd)}
+.lede{margin-top:28px;max-width:560px;color:var(--g1);font-weight:300;font-size:16px}
+
+/* ── window switch ── */
+.win{margin-top:40px;display:flex;align-items:center;gap:1px;background:var(--ln);
+  border:1px solid var(--ln);width:max-content}
+.win button{background:var(--bk);padding:12px 26px;font-family:var(--mono);font-size:11px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--g2);transition:.2s}
+.win button:hover{color:var(--wh)}
+.win button[aria-pressed="true"]{background:var(--s2);color:var(--wh)}
+.win-n{margin-top:14px;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--g3)}
+
+/* ── summary strip ── */
+.sum{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--ln);
+  border:1px solid var(--ln);margin-top:44px}
+.st{background:var(--bk);padding:24px 22px 26px}
+.st-l{font-family:var(--mono);font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--g3)}
+.st-v{font-family:var(--mono);font-size:clamp(24px,3vw,34px);font-weight:300;line-height:1;
+  letter-spacing:-.045em;margin-top:15px;font-variant-numeric:tabular-nums}
+.st-v.neg{color:var(--rd)}
+.st-s{font-family:var(--mono);font-size:10.5px;color:var(--g3);margin-top:11px}
+
+/* ── table ── */
+.tbl{margin-top:56px;border-top:1px solid var(--ln2)}
+.thead,.row{display:grid;grid-template-columns:44px 232px 1fr 132px 108px 92px 96px;
+  gap:22px;align-items:center;padding:18px 8px}
+.thead{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--g3);border-bottom:1px solid var(--ln)}
+.thead span:nth-child(n+4){text-align:right}
+.row{border-bottom:1px solid var(--ln);text-align:left;width:100%;
+  transition:background .2s;font-variant-numeric:tabular-nums}
+.row:hover{background:var(--s1)}
+.rk{font-family:var(--mono);font-size:11px;color:var(--g3)}
+.who{font-family:var(--mono);font-size:14px;letter-spacing:-.01em}
+.who small{display:block;font-family:var(--sans);font-size:12px;font-weight:300;
+  color:var(--g2);margin-top:5px;letter-spacing:0}
+.amt{font-family:var(--mono);font-size:17px;font-weight:300;color:var(--rd);text-align:right;
+  letter-spacing:-.03em}
+.num{font-family:var(--mono);font-size:12px;color:var(--g1);text-align:right}
+.num.dim{color:var(--g2)}
+
+/* Share of the leader, sized against row 1. Sits in the column the numbers
+   would otherwise be stranded across. One accent, no gradient. */
+.bar{height:4px;background:var(--ln)}
+.bar i{display:block;height:100%;background:var(--rd)}
+
+.more{margin-top:34px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.more small{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--g3)}
+
+/* ── how it's computed ── */
+.meth{padding:104px 0 0;display:grid;grid-template-columns:210px 1fr;gap:54px}
+.sec-k{font-family:var(--mono);font-size:10px;letter-spacing:.24em;text-transform:uppercase;
+  color:var(--g3)}
+.meth p{color:var(--g1);font-weight:300;max-width:620px;margin-bottom:17px;font-size:15px}
+.meth p b{color:var(--wh);font-weight:500}
+.meth p:last-child{margin-bottom:0}
+.rules{list-style:none;margin-top:26px;border-top:1px solid var(--ln);max-width:620px}
+.rules li{padding:14px 0;border-bottom:1px solid var(--ln);display:flex;gap:18px;
+  color:var(--g1);font-weight:300;font-size:14px}
+.rules li b{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--g3);min-width:96px;font-weight:400;padding-top:4px}
+
+.cta-b{margin-top:104px;border:1px solid var(--ln);background:var(--s1);padding:40px 36px 44px;
+  display:flex;justify-content:space-between;align-items:flex-end;gap:36px;flex-wrap:wrap}
+.cta-b h2{font-size:clamp(24px,3.2vw,36px);letter-spacing:-.04em;line-height:1.04;
+  font-weight:700;font-variation-settings:'wdth' 104;max-width:520px}
+.cta-b h2 u{text-decoration:none;color:var(--rd)}
+.cta-b p{margin-top:14px;color:var(--g1);font-weight:300;font-size:14.5px;max-width:460px}
+
+footer{margin-top:96px;padding:26px 0 76px;border-top:1px solid var(--ln);
+  display:flex;justify-content:space-between;gap:18px 32px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--g3)}
+footer nav{display:flex;gap:22px;flex-wrap:wrap}
+footer a:hover{color:var(--wh)}
+
+@media (max-width:980px){
+  .w,.nav-in,.rule>div{padding-left:24px;padding-right:24px}
+  .rule>div{grid-template-columns:repeat(2,1fr)}
+  .nav-l{display:none}
+  .sum{grid-template-columns:1fr 1fr}
+  .meth{grid-template-columns:1fr;gap:22px}
+  .thead{display:none}
+  .row{grid-template-columns:32px 1fr auto;gap:14px;row-gap:10px;padding:18px 8px}
+  .bar{grid-column:1/-1;order:4}
+  .num{grid-row:2;text-align:left;font-size:11px}
+  .amt{font-size:16px}
+  .rules li{flex-direction:column;gap:6px}
+  .rules li b{min-width:0}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<a class="skip" href="#table">Skip to the ranking</a>
+<div class="rule" aria-hidden="true"><div><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="logo" href="exitliquidity-landing.html"><span class="sq"></span>EXIT<i>LIQUIDITY</i></a>
+    <div class="nav-l">
+      <a href="exitliquidity-index.html" aria-current="page">Index</a>
+      <a href="exitliquidity-leadtime.html">Lead-time</a>
+      <a href="exitliquidity-landing.html#method">Method</a>
+      <a href="exitliquidity-landing.html#pricing">Pricing</a>
+    </div>
+    <a class="btn" href="exitliquidity-app.html">Trace a wallet</a>
+  </div>
+</nav>
+
+<div class="w">
+
+  <header class="head">
+    <div class="kick">Public page · no account</div>
+    <h1>The biggest<br><u>takers</u> on Solana.</h1>
+    <p class="lede">Every wallet ranked by the dollars attributed to it out of other people's closed losses. Not profit, not volume — the share of somebody else's realised loss that landed on the other side of the trade.</p>
+  </header>
+
+  <div class="win" role="group" aria-label="Ranking window">
+    <button data-win="7" aria-pressed="false">7 days</button>
+    <button data-win="30" aria-pressed="true">30 days</button>
+    <button data-win="90" aria-pressed="false">90 days</button>
+  </div>
+  <div class="win-n" id="win-note">Rolling 30 days to 04 Aug 2026 · rebuilt hourly</div>
+
+  <section class="sum" id="sum">
+    <div class="st"><div class="st-l">Attributed, top 100</div>
+      <div class="st-v neg" id="s-total">$41.8M</div>
+      <div class="st-s" id="s-total-n">across 18,204 losing wallets</div></div>
+    <div class="st"><div class="st-l">Top wallet share</div>
+      <div class="st-v" id="s-share">5.1%</div>
+      <div class="st-s">of the top-100 total</div></div>
+    <div class="st"><div class="st-l">Median lead time</div>
+      <div class="st-v" id="s-lead">−38s</div>
+      <div class="st-s">before the move, top 100</div></div>
+    <div class="st"><div class="st-l">In a known cluster</div>
+      <div class="st-v" id="s-cluster">41</div>
+      <div class="st-s">of 100 wallets</div></div>
+  </section>
+
+  <section id="table">
+    <div class="tbl">
+      <div class="thead" aria-hidden="true">
+        <span>#</span><span>Wallet</span><span>Share of #1</span><span>Attributed</span>
+        <span>Wallets hit</span><span>Pools</span><span>Median lead</span>
+      </div>
+      <div id="rows"></div>
+    </div>
+
+    <div class="more">
+      <a class="btn btn-o" href="exitliquidity-app.html">Open a file on any of these</a>
+      <small id="more-n">Showing 12 of 100 · demo data</small>
+    </div>
+  </section>
+
+  <section class="meth">
+    <div class="sec-k">How this is built</div>
+    <div>
+      <p>A wallet appears here when it was <b>reducing supply into the same window</b> that somebody else's losing position opened, in the same pool. Its rank is the sum of those attributed dollars over the window.</p>
+      <p>This is overlap, not proof. On an AMM you trade against a pool, not a person, and nothing here claims otherwise. Every row on an extractor's own file carries the pool, timestamp and slot range it came from, so the attribution can be checked rather than trusted.</p>
+      <ul class="rules">
+        <li><b>Counted</b><span>Realised losses only. An open position hasn't paid anyone yet, so it is excluded.</span></li>
+        <li><b>Excluded</b><span>The loser's own wallets and funding cluster; LP adds and removes; CEX hot wallets, routers and aggregator vaults.</span></li>
+        <li><b>Excluded</b><span>Any wallet whose net position change inside the window is under 20% of its gross volume — that is a market maker round-tripping, not a distributor.</span></li>
+        <li><b>Weighting</b><span>Each sell is weighted by size and by how close it sat to the buy it is being netted against.</span></li>
+        <li><b>Cost basis</b><span>Tokens that arrived by transfer rather than by swap have no basis, and those positions are dropped instead of counted as free profit.</span></li>
+      </ul>
+      <p style="margin-top:26px"><b>A high rank is not an accusation.</b> Market makers, arbitrage desks and ordinary early buyers all appear on this list. What the number says is how much of other people's realised loss overlapped with this address — nothing more.</p>
+    </div>
+  </section>
+
+  <section class="cta-b">
+    <div>
+      <h2>Now check whether any of them<br>have been on <u>your</u> side.</h2>
+      <p>Paste an address. Three traces a day, no account, no wallet connect.</p>
+    </div>
+    <a class="btn btn-r" href="exitliquidity-app.html">Trace a wallet</a>
+  </section>
+
+  <footer>
+    <span>ExitLiquidity — prototype</span>
+    <nav aria-label="Public pages">
+      <a href="exitliquidity-landing.html">Home</a>
+      <a href="exitliquidity-leadtime.html">Lead-time radar</a>
+      <a href="exitliquidity-app.html">Console</a>
+      <a href="exitliquidity-landing.html#method">Method</a>
+    </nav>
+    <span>All figures on this page are demo data</span>
+  </footer>
+</div>
+
+<script>
+/* Demo data. Three windows so the switch does something real rather than
+   re-rendering the same list — the shape of the ranking changing with the
+   window is the point of having the window at all. */
+const DATA={
+  7:{total:"$9.6M",totalN:"across 4,110 losing wallets",share:"6.4%",lead:"−31s",cluster:"38",
+     note:"Rolling 7 days to 04 Aug 2026 · rebuilt hourly",
+     rows:[
+      ["9mQr…4kR8","Deployer-adjacent · 41 launches",612000,"318","44","−22s"],
+      ["Qw8x…2pRv","Buys 38s before the move, 96 times",488000,"244","61","−38s"],
+      ["Bk2v…QsN1","Bundle cluster · 9 wallets",401000,"512","28","−9s"],
+      ["3Fpz…7wLm","Repeat early seller",362000,"286","39","−17s"],
+      ["Ms4t…Kd9J","Repeat early seller",298000,"197","33","−44s"],
+      ["Zn7b…Ry5C","Bundle cluster · 14 wallets",254000,"430","19","−6s"],
+      ["Ht9c…Zx4B","First buyer, first out",231000,"151","52","−51s"],
+      ["Vd2m…Ln8Q","Unlabelled",188000,"122","24","−12s"],
+      ["6Ldw…Mv3T","Unlabelled",164000,"98","31","−28s"],
+      ["Tp5k…Wq2X","Deployer-adjacent · 12 launches",141000,"87","17","−19s"],
+      ["Rx3n…Ja6H","Repeat early seller",122000,"76","22","−35s"],
+      ["Yc8v…Nb4P","Unlabelled",104000,"64","14","−8s"]]},
+  30:{total:"$41.8M",totalN:"across 18,204 losing wallets",share:"5.1%",lead:"−38s",cluster:"41",
+     note:"Rolling 30 days to 04 Aug 2026 · rebuilt hourly",
+     rows:[
+      ["9mQr…4kR8","Deployer-adjacent · 41 launches",2140000,"1,284","96","−41s"],
+      ["Qw8x…2pRv","Buys 38s before the move, 96 times",1870000,"902","134","−38s"],
+      ["3Fpz…7wLm","Repeat early seller",1520000,"1,106","88","−17s"],
+      ["Bk2v…QsN1","Bundle cluster · 9 wallets",1340000,"1,842","61","−9s"],
+      ["Zn7b…Ry5C","Bundle cluster · 14 wallets",1180000,"1,533","47","−6s"],
+      ["Ms4t…Kd9J","Repeat early seller",984000,"711","72","−44s"],
+      ["Ht9c…Zx4B","First buyer, first out",871000,"528","119","−51s"],
+      ["Vd2m…Ln8Q","Unlabelled",742000,"466","58","−12s"],
+      ["6Ldw…Mv3T","Unlabelled",690000,"402","64","−28s"],
+      ["Tp5k…Wq2X","Deployer-adjacent · 12 launches",614000,"355","41","−19s"],
+      ["Rx3n…Ja6H","Repeat early seller",556000,"318","53","−35s"],
+      ["Yc8v…Nb4P","Unlabelled",489000,"271","36","−8s"]]},
+  90:{total:"$118.2M",totalN:"across 52,880 losing wallets",share:"4.4%",lead:"−35s",cluster:"46",
+     note:"Rolling 90 days to 04 Aug 2026 · rebuilt hourly",
+     rows:[
+      ["Qw8x…2pRv","Buys 38s before the move, 96 times",5210000,"2,844","388","−35s"],
+      ["9mQr…4kR8","Deployer-adjacent · 41 launches",4980000,"3,102","241","−41s"],
+      ["Bk2v…QsN1","Bundle cluster · 9 wallets",4110000,"5,208","168","−9s"],
+      ["3Fpz…7wLm","Repeat early seller",3640000,"2,981","206","−17s"],
+      ["Zn7b…Ry5C","Bundle cluster · 14 wallets",3220000,"4,466","131","−6s"],
+      ["Ht9c…Zx4B","First buyer, first out",2880000,"1,644","341","−51s"],
+      ["Ms4t…Kd9J","Repeat early seller",2410000,"1,922","198","−44s"],
+      ["Tp5k…Wq2X","Deployer-adjacent · 12 launches",1960000,"1,088","124","−19s"],
+      ["Vd2m…Ln8Q","Unlabelled",1740000,"1,241","162","−12s"],
+      ["6Ldw…Mv3T","Unlabelled",1580000,"1,004","171","−28s"],
+      ["Rx3n…Ja6H","Repeat early seller",1390000,"902","148","−35s"],
+      ["Yc8v…Nb4P","Unlabelled",1210000,"766","97","−8s"]]}
+};
+
+const usd=n=>n>=1e6?"$"+(n/1e6).toFixed(2)+"M":"$"+Math.round(n/1e3)+"K";
+const rows=document.getElementById("rows");
+
+function render(win){
+  const d=DATA[win],peak=d.rows[0][2];
+  document.getElementById("s-total").textContent=d.total;
+  document.getElementById("s-total-n").textContent=d.totalN;
+  document.getElementById("s-share").textContent=d.share;
+  document.getElementById("s-lead").textContent=d.lead;
+  document.getElementById("s-cluster").textContent=d.cluster;
+  document.getElementById("win-note").textContent=d.note;
+  document.getElementById("more-n").textContent="Showing "+d.rows.length+" of 100 · demo data";
+
+  rows.innerHTML=d.rows.map(([addr,tag,amt,hit,pools,lead],i)=>`
+    <a class="row" href="exitliquidity-app.html">
+      <span class="rk">${String(i+1).padStart(2,"0")}</span>
+      <span class="who">${addr}<small>${tag}</small></span>
+      <span class="bar" role="img" aria-label="${(amt/peak*100).toFixed(0)}% of the top wallet"><i style="width:${(amt/peak*100).toFixed(1)}%"></i></span>
+      <span class="amt">${usd(amt)}</span>
+      <span class="num">${hit}</span>
+      <span class="num dim">${pools}</span>
+      <span class="num">${lead}</span>
+    </a>`).join("");
+}
+
+document.querySelectorAll(".win button").forEach(b=>{
+  b.addEventListener("click",()=>{
+    document.querySelectorAll(".win button").forEach(o=>o.setAttribute("aria-pressed",o===b));
+    render(b.dataset.win);
+  });
+});
+
+render("30");
+</script>
+</body>
+</html>

@@ -5,7 +5,8 @@ Solana counterparty forensics. The spec is [`docs/exitliquidity-handoff.md`](doc
 **This repository is at P0: swap ingest.** Pump.fun bonding curve and PumpSwap
 swaps are streamed, backfilled and normalised into the `swaps` table from §5.
 Nothing downstream of that exists yet — no position accounting, no attribution,
-no UI. P1 is a hard gate and has not been started.
+and no application beyond the static design prototypes in `docs/design/`. P1 is
+a hard gate and has not been started.
 
 ---
 
@@ -23,6 +24,26 @@ no UI. P1 is a hard gate and has not been started.
 Both ingest paths — the live stream and the RPC backfill — run through the same
 `SwapPipeline` and the same `SwapWriter`. That is deliberate: the seam between
 two differently-wired paths is exactly where a count discrepancy would hide.
+
+## Design prototypes
+
+Static, in `docs/design/`. Open them straight from the filesystem — they have no
+build step and no backend. All four share one palette, one type system and one
+accent colour, taken from the landing page, which §3 makes the source of truth.
+
+| File                          | What it is                                                |
+| ----------------------------- | --------------------------------------------------------- |
+| `exitliquidity-landing.html`  | Marketing page. Design source of truth (§3)               |
+| `exitliquidity-index.html`    | Extractor index — biggest takers, 7/30/90d                |
+| `exitliquidity-leadtime.html` | Lead-time radar, with the pump definition §8 asks for     |
+| `exitliquidity-app.html`      | Console: trace, pre-trade, file, watchlist, receipt, card |
+
+The index and lead-time pages are the two surfaces §1 calls the acquisition
+core — the only ones a first-time visitor can read without pasting anything —
+and they are what P3 server-renders first.
+
+Every figure in all four is demo data and labelled as such. Rule §7.4: those
+labels come off only when real data is behind them.
 
 ## Getting started
 

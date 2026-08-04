@@ -4,6 +4,29 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ExitLiquidity — every loss has a counterparty</title>
+<meta name="description" content="Solana counterparty forensics. Paste a wallet and see which addresses were reducing supply into the windows your losing positions opened — ranked by dollars, with the window on every row.">
+<link rel="canonical" href="https://exitliquidity.xyz/">
+<meta name="theme-color" content="#060607">
+<meta name="color-scheme" content="dark">
+
+<!-- Distribution is people posting traces into Telegram and X. A blank link
+     preview there costs more reach than any of the copy on this page earns. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ExitLiquidity">
+<meta property="og:url" content="https://exitliquidity.xyz/">
+<meta property="og:title" content="Every loss has a counterparty">
+<meta property="og:description" content="Your money didn't evaporate — a wallet is holding it. ExitLiquidity nets pool activity window by window to work out who was distributing while you were buying.">
+<meta property="og:image" content="https://exitliquidity.xyz/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Three closed losses flowing into three counterparty wallets">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Every loss has a counterparty">
+<meta name="twitter:description" content="Paste a Solana wallet. See who was on the other side of every position you closed in the red.">
+<meta name="twitter:image" content="https://exitliquidity.xyz/og.png">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060607'/%3E%3Crect x='12' y='12' width='8' height='8' fill='%23E23B2E'/%3E%3C/svg%3E">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -25,6 +48,13 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 :focus-visible{outline:1px solid var(--rd);outline-offset:4px}
 h1,h2,h3{font-weight:400}
 :target{scroll-margin-top:120px}
+/* §3: every number is monospace with tabular figures. */
+.kick,.sec-k,.nav-l,.tier,.spec-cap,.p-n,.p-v,.open-v,.open-l,.pre-n,.field-n,
+.wait small,.note-m,.card-go,.open-go,footer{font-variant-numeric:tabular-nums}
+
+.skip{position:absolute;left:-9999px;top:0;z-index:60;background:var(--wh);color:var(--bk);
+  padding:12px 20px;font-weight:600;font-size:12.5px}
+.skip:focus{left:0}
 
 .rule{position:fixed;inset:0;z-index:0;pointer-events:none;display:flex;justify-content:center}
 .rule>div{width:100%;max-width:1180px;padding:0 44px;height:100%;
@@ -71,7 +101,6 @@ h1,h2,h3{font-weight:400}
 .mcol a span{display:block;font-size:11.5px;color:var(--g2);font-weight:300;
   line-height:1.45;margin-top:3px}
 .mcol a:hover b{color:var(--rd)}
-.mtoggle{display:none}
 
 /* ── hero ── */
 .hero{padding:110px 0 0;max-width:900px}
@@ -83,9 +112,28 @@ h1{font-size:clamp(42px,7.4vw,88px);line-height:.98;letter-spacing:-.045em;
 h1 em{font-style:normal;font-weight:300;color:var(--g2)}
 h1 u{text-decoration:none;color:var(--rd)}
 .lede{margin-top:34px;max-width:540px;color:var(--g1);font-weight:300;font-size:16.5px}
-.cta{margin-top:40px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-.cta small{font-family:var(--mono);font-size:10px;color:var(--g3);
-  letter-spacing:.14em;text-transform:uppercase}
+
+/* The entire free tier is "paste an address". Putting that box anywhere other
+   than the hero adds a click to the highest-intent action on the page. */
+.field{display:flex;margin-top:36px;max-width:620px;border:1px solid var(--ln2);
+  background:var(--s1);transition:border-color .2s}
+.field:focus-within{border-color:var(--g3)}
+.field input{flex:1;min-width:0;background:none;border:none;color:var(--wh);
+  font-family:var(--mono);font-size:13px;padding:0 20px;letter-spacing:-.01em}
+.field input::placeholder{color:var(--g3)}
+.field input:focus{outline:none}
+.field input[aria-invalid="true"]{color:var(--rd)}
+.field .go{padding:17px 26px;background:var(--rd);color:#fff;font-weight:600;
+  font-size:12.5px;white-space:nowrap;transition:background .18s}
+.field .go:hover{background:#F04A3C}
+.tries{margin-top:14px;display:flex;flex-wrap:wrap;gap:9px;align-items:center}
+.tries small,.field-n{font-family:var(--mono);font-size:10px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--g3)}
+.chip{border:1px solid var(--ln);padding:7px 13px;font-family:var(--mono);
+  font-size:11.5px;color:var(--g2);transition:.2s}
+.chip:hover{border-color:var(--ln2);color:var(--wh)}
+.field-n{margin-top:16px;display:block}
+.cta{margin-top:26px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 
 /* ── specimen ── */
 .spec{margin-top:88px;border-top:1px solid var(--ln);border-bottom:1px solid var(--ln);
@@ -110,6 +158,38 @@ h1 u{text-decoration:none;color:var(--rd)}
   font-weight:700;font-variation-settings:'wdth' 104;max-width:660px}
 .sec-n{margin-top:18px;max-width:520px;color:var(--g1);font-weight:300}
 
+/* ── open pages ──
+   Everything else on this site needs input before it shows anything. These
+   three do not, so they are the only thing a first-time visitor can read. */
+.open{margin-top:46px;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
+  background:var(--ln);border:1px solid var(--ln)}
+.open a{background:var(--bk);padding:24px 22px 26px;display:block;transition:background .22s}
+.open a:hover{background:var(--s1)}
+.open-l{font-family:var(--mono);font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--g3)}
+.open-v{font-family:var(--mono);font-size:32px;font-weight:300;letter-spacing:-.045em;
+  margin:16px 0 6px;line-height:1}
+.open-v.neg{color:var(--rd)}
+.open h3{font-size:15px;font-weight:600;letter-spacing:-.02em;margin-top:18px}
+.open p{margin-top:7px;color:var(--g2);font-weight:300;font-size:12.5px;line-height:1.5}
+.open a:hover h3{color:var(--rd)}
+.open-go{display:block;margin-top:14px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--g3)}
+.open a:hover .open-go{color:var(--wh)}
+
+/* ── pre-trade: the commercial core ── */
+.pre{margin-top:112px;border:1px solid var(--ln);display:grid;grid-template-columns:1.15fr 1fr}
+.pre-l{padding:44px 40px 48px}
+.pre-r{border-left:1px solid var(--ln);background:var(--s1);padding:44px 40px 48px;
+  display:flex;flex-direction:column;justify-content:center}
+.pre h2{font-size:clamp(26px,3.6vw,40px);letter-spacing:-.04em;line-height:1.04;
+  font-weight:700;font-variation-settings:'wdth' 104;margin-top:16px}
+.pre h2 u{text-decoration:none;color:var(--rd)}
+.pre p{margin-top:20px;color:var(--g1);font-weight:300;max-width:460px}
+.pre-n{margin-top:26px;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--g3);padding-top:20px;border-top:1px solid var(--ln)}
+.pre svg{display:block;width:100%;height:auto}
+
 /* ── feature groups ── */
 .grp{margin-top:66px}
 .grp-h{display:flex;align-items:baseline;gap:16px;padding-bottom:14px;
@@ -119,7 +199,7 @@ h1 u{text-decoration:none;color:var(--rd)}
 .grp-h span{font-size:14px;color:var(--g2);font-weight:300}
 .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--ln);
   border-left:1px solid var(--ln);border-right:1px solid var(--ln);border-bottom:1px solid var(--ln)}
-.card{background:var(--bk);padding:24px 22px 28px;transition:background .22s}
+.card{background:var(--bk);padding:24px 22px 28px;transition:background .22s;display:block}
 .card:hover{background:var(--s1)}
 .card svg{display:block;width:100%;height:auto;margin-bottom:20px}
 .card-t{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
@@ -128,12 +208,19 @@ h1 u{text-decoration:none;color:var(--rd)}
   color:var(--rd);white-space:nowrap}
 .tier.fr{color:var(--g3)}
 .card p{margin-top:10px;color:var(--g1);font-weight:300;font-size:13.5px;line-height:1.55}
+a.card:hover h3{color:var(--rd)}
+.card-go{display:block;margin-top:12px;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--g3)}
+a.card:hover .card-go{color:var(--wh)}
 
 /* ── method ── */
 .meth{padding:112px 0 0;display:grid;grid-template-columns:210px 1fr;gap:54px}
 .meth p{color:var(--g1);font-weight:300;max-width:620px;margin-bottom:17px;font-size:15px}
 .meth p b{color:var(--wh);font-weight:500}
 .meth p:last-child{margin-bottom:0}
+.note-m{margin-top:26px;padding-top:20px;border-top:1px solid var(--ln);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--g3);max-width:620px}
 
 /* ── pricing ── */
 .price{margin-top:52px;display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--ln)}
@@ -147,6 +234,21 @@ h1 u{text-decoration:none;color:var(--rd)}
   color:var(--g1);display:flex;gap:12px}
 .p li::before{content:"—";color:var(--g3)}
 .p li:last-child{border:none}
+.p-q{margin-top:24px;padding-top:20px;border-top:1px solid var(--ln);color:var(--g2);
+  font-weight:300;font-size:13px;line-height:1.55}
+
+/* ── waitlist ── */
+.wait{margin-top:112px;border:1px solid var(--ln);background:var(--s1);
+  padding:44px 40px 48px;display:grid;grid-template-columns:1fr 1fr;gap:44px;align-items:center}
+.wait h2{font-size:clamp(24px,3.2vw,34px);letter-spacing:-.038em;line-height:1.06;
+  font-weight:700;font-variation-settings:'wdth' 104}
+.wait p{margin-top:16px;color:var(--g1);font-weight:300;font-size:14.5px;max-width:420px}
+.wait small{display:block;margin-top:16px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--g3)}
+.wait .field{margin-top:0;max-width:none}
+.wait-s{margin-top:14px;min-height:34px;font-family:var(--mono);font-size:11px;
+  color:var(--g2);line-height:1.55}
+.wait-s b{color:var(--rd);font-weight:400}
 
 .close{margin-top:120px;border-top:1px solid var(--ln);padding:74px 0 0;
   display:flex;justify-content:space-between;align-items:flex-end;gap:40px;flex-wrap:wrap}
@@ -154,26 +256,34 @@ h1 u{text-decoration:none;color:var(--rd)}
   font-weight:700;font-variation-settings:'wdth' 104;max-width:580px}
 .close h2 u{text-decoration:none;color:var(--rd)}
 footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
-  display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;
+  display:flex;justify-content:space-between;gap:18px 32px;flex-wrap:wrap;
   font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--g3)}
+footer nav{display:flex;gap:22px;flex-wrap:wrap}
+footer a:hover{color:var(--wh)}
 
-@media (max-width:1080px){.cards{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:1080px){.cards,.open{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:900px){
   .w,.nav-in,.rule>div,.mega-in{padding-left:24px;padding-right:24px}
   .rule>div{grid-template-columns:repeat(2,1fr)}
   .nav-l a,.nav-l .desk{display:none}
   .mega-in{grid-template-columns:1fr;gap:26px;padding-top:26px;padding-bottom:30px}
   .mcol{padding:0;border-left:none}
-  .cards{grid-template-columns:1fr}
+  .cards,.open{grid-template-columns:1fr}
   .meth{grid-template-columns:1fr;gap:22px}
-  .price{grid-template-columns:1fr}
+  .price,.pre,.wait{grid-template-columns:1fr}
   .p+.p{border-left:none;border-top:1px solid var(--ln)}
+  .pre-r{border-left:none;border-top:1px solid var(--ln)}
+  .pre-l,.pre-r,.wait{padding:32px 26px 36px}
+  .field{flex-direction:column}
+  .field input{padding:16px 18px}
 }
-@media (prefers-reduced-motion:reduce){.pulse{visibility:hidden}}
+@media (prefers-reduced-motion:reduce){.pulse{visibility:hidden}
+  *{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
 
+<a class="skip" href="#product">Skip to content</a>
 <div class="rule" aria-hidden="true"><div><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
 
 <nav class="nav">
@@ -181,6 +291,7 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
     <div class="logo"><span class="sq"></span>EXIT<i>LIQUIDITY</i></div>
     <div class="nav-l">
       <button id="mbtn" aria-expanded="false" aria-controls="mega">Features<span class="car">▼</span></button>
+      <a href="exitliquidity-index.html" class="desk">Index</a>
       <a href="#method" class="desk">Method</a>
       <a href="#pricing" class="desk">Pricing</a>
     </div>
@@ -203,9 +314,9 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
       </div>
       <div class="mcol">
         <h4>Public pages</h4>
-        <a href="#f-token"><b>Token receipt</b><span>Who funded whom, per token</span></a>
-        <a href="#f-index"><b>Extractor index</b><span>Solana's biggest takers, ranked</span></a>
-        <a href="#f-lead"><b>Lead-time radar</b><span>Wallets ranked by how early they are</span></a>
+        <a href="exitliquidity-app.html"><b>Token receipt</b><span>Who funded whom, per token</span></a>
+        <a href="exitliquidity-index.html"><b>Extractor index</b><span>Solana's biggest takers, ranked</span></a>
+        <a href="exitliquidity-leadtime.html"><b>Lead-time radar</b><span>Wallets ranked by how early they are</span></a>
       </div>
       <div class="mcol">
         <h4>Take it with you</h4>
@@ -223,10 +334,20 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
     <div class="kick">Solana · counterparty forensics</div>
     <h1>Every loss has<br><em>a</em> <u>counterparty.</u></h1>
     <p class="lede">Your money didn't evaporate — a wallet is holding it. ExitLiquidity nets pool activity window by window to work out who was distributing while you were buying, then keeps watching them for you.</p>
+
+    <form class="field" id="trace-form" action="exitliquidity-app.html" method="get">
+      <input id="addr" name="wallet" type="text" spellcheck="false" autocomplete="off"
+        placeholder="Solana wallet address" aria-label="Solana wallet address">
+      <button class="go" type="submit">Trace wallet</button>
+    </form>
+    <div class="tries"><small>Try</small>
+      <button class="chip" type="button" data-fill="7xKq4mNvB2tRsW8pLcYzE1uHgJ6dQaXn9fD3">7xKq…9fD3</button>
+      <button class="chip" type="button" data-fill="4BnvKp7sRtY2xQmLd9WcEuZa5HgJ3oVfHa7Z">4Bnv…Ha7Z</button>
+    </div>
+    <span class="field-n" id="addr-note">Three free traces a day · No wallet connect · Read-only</span>
+
     <div class="cta">
-      <a class="btn btn-r" href="exitliquidity-app.html">Trace a wallet</a>
       <a class="btn btn-o" href="#product">See all twelve features</a>
-      <small>No wallet connect · read-only</small>
     </div>
   </section>
 
@@ -274,6 +395,83 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
     <p>Rug checkers warn you about a token after it's already gone. PnL trackers measure the size of the hole. Neither answers the only question that changes what you do next — <b>the same handful of wallets keep turning up on the other side of your trades, and you have never once seen their addresses.</b></p>
   </section>
 
+  <!-- OPEN PAGES — the only surfaces here that need no input at all. -->
+  <section class="sec" id="open">
+    <div class="sec-k">Nothing to paste yet</div>
+    <h2>Start by reading<br>someone else's.</h2>
+    <p class="sec-n">Three pages open to everyone, no account. Same engine, pointed at the whole chain instead of at you.</p>
+
+    <div class="open">
+      <a href="exitliquidity-index.html">
+        <div class="open-l">Top extractor · 30d</div>
+        <div class="open-v neg">$2.14M</div>
+        <div class="open-l">9mQr…4kR8 · 1,284 wallets</div>
+        <h3>Extractor index</h3>
+        <p>Every wallet on Solana ranked by dollars taken out, over 7, 30 and 90 days.</p>
+        <span class="open-go">Read the index →</span>
+      </a>
+      <a href="exitliquidity-leadtime.html">
+        <div class="open-l">Sharpest median lead</div>
+        <div class="open-v neg">−41s</div>
+        <div class="open-l">Qw8x…2pRv · 96 pumps</div>
+        <h3>Lead-time radar</h3>
+        <p>Ranked by how early wallets buy relative to the move — not by how much they made.</p>
+        <span class="open-go">Read the radar →</span>
+      </a>
+      <a href="exitliquidity-app.html">
+        <div class="open-l">$BONKX · net transfer</div>
+        <div class="open-v neg">$2.14M</div>
+        <div class="open-l">3,412 funded · 14 took</div>
+        <h3>Token receipt</h3>
+        <p>One permanent page per token: how many wallets funded how few, and by how much.</p>
+        <span class="open-go">Read a receipt →</span>
+      </a>
+    </div>
+    <div class="spec-cap" style="margin-top:20px"><span>One page per token, per wallet, per window</span><span>Demo data throughout</span></div>
+  </section>
+
+  <!-- METHOD — ahead of the feature grid. The objection that could kill this
+       product arrives before the features do, so the answer should too. -->
+  <section class="meth" id="method">
+    <div class="sec-k" style="margin:0">Method</div>
+    <div>
+      <p>On an AMM you don't trade against a person, you trade against a pool. No tool can prove wallet A handed money to wallet B, and anything claiming otherwise is selling certainty it doesn't have.</p>
+      <p>What ExitLiquidity measures is <b>overlap</b>. Per pool, buys and sells are netted inside a short window. A wallet reducing supply into the window your position opened is attributed a share of that supply, weighted by size. Every row carries the window it came from, so you can check the attribution instead of trusting it.</p>
+      <p>Realised profit and loss only — open positions are excluded, because an unrealised loss hasn't paid anyone yet. Read-only: pasting an address is the whole authentication model, and there is nothing to connect or approve.</p>
+      <p class="note-m">Pool · timestamp · slot range on every attributed row. Checkable, not asserted.</p>
+    </div>
+  </section>
+
+  <!-- PRE-TRADE — the commercial core, given its own block rather than one
+       cell in a twelve-cell grid. -->
+  <section class="pre" id="f-pre">
+    <div class="pre-l">
+      <div class="sec-k" style="margin:0">The one that runs forward</div>
+      <h2>Nine of these are<br>a post-mortem.<br><u>This one isn't.</u></h2>
+      <p>Paste a token you're about to enter. If a wallet that has taken from you before is already sitting in that pool, you see it while you can still walk away.</p>
+      <p>Everything else here explains a loss you already took. This is the only screen that changes what happens next — and the only one people open before a buy rather than after.</p>
+      <div class="pre-n">Pro · needs one trace first</div>
+    </div>
+    <div class="pre-r">
+      <svg viewBox="0 0 320 150" role="img" aria-label="A pool check flagging two known counterparties already in the pool">
+        <rect x="4" y="6" width="312" height="34" fill="none" stroke="var(--ln2)"/>
+        <text x="20" y="28" font-family="var(--mono)" font-size="12" fill="var(--g1)">$NEWCOIN</text>
+        <text x="300" y="28" font-family="var(--mono)" font-size="10" fill="var(--g3)" text-anchor="end">launched 6m ago</text>
+        <rect x="4" y="52" width="312" height="42" fill="rgba(226,59,46,.13)" stroke="var(--rd)"/>
+        <rect x="18" y="66" width="9" height="9" fill="var(--rd)"/>
+        <text x="36" y="75" font-family="var(--mono)" font-size="11" fill="var(--rd)">2 of your extractors are in here</text>
+        <g font-family="var(--mono)" font-size="10" fill="var(--g2)">
+          <text x="18" y="116">9mQr…4kR8</text>
+          <text x="300" y="116" text-anchor="end">4.1% · in 41s after launch</text>
+          <text x="18" y="138">Bk2v…QsN1</text>
+          <text x="300" y="138" text-anchor="end">2.3% · in 2m 14s after launch</text>
+        </g>
+        <line x1="4" y1="124" x2="316" y2="124" stroke="var(--ln)"/>
+      </svg>
+      <div class="spec-cap" style="margin-top:18px"><span>Demo data</span></div>
+    </div>
+  </section>
+
   <section class="sec" id="product">
     <div class="sec-k">The product</div>
     <h2>Twelve surfaces,<br>one engine</h2>
@@ -283,8 +481,8 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
     <div class="grp">
       <div class="grp-h"><b>Look backward</b><span>What already happened, and who it happened to you for.</span></div>
       <div class="cards">
-        <article class="card" id="f-trace">
-          <svg viewBox="0 0 200 70"><g fill="var(--rd)">
+        <a class="card" id="f-trace" href="exitliquidity-app.html">
+          <svg viewBox="0 0 200 70" aria-hidden="true"><g fill="var(--rd)">
             <path opacity=".5" d="M32,10 C100,10 108,6 168,6 L168,18 C108,18 100,24 32,24 Z"/>
             <path opacity=".32" d="M32,24 C100,24 108,34 168,34 L168,46 C108,46 100,36 32,36 Z"/>
             <path opacity=".2" d="M32,42 C100,42 108,54 168,54 L168,64 C108,64 100,54 32,54 Z"/></g>
@@ -293,10 +491,11 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
               <rect x="168" y="34" width="4" height="12"/><rect x="168" y="54" width="4" height="10"/></g></svg>
           <div class="card-t"><h3>Wallet trace</h3><span class="tier fr">Free</span></div>
           <p>Paste any Solana address. Every position closed in the red is mapped to the wallets that were reducing supply into the same window, ranked by dollars attributed.</p>
-        </article>
+          <span class="card-go">Run one →</span>
+        </a>
 
         <article class="card" id="f-file">
-          <svg viewBox="0 0 200 70"><g stroke="var(--ln2)" fill="none">
+          <svg viewBox="0 0 200 70" aria-hidden="true"><g stroke="var(--ln2)" fill="none">
             <path d="M96,35 C126,35 132,10 172,10"/><path d="M96,35 C126,35 132,22 172,22"/>
             <path d="M96,35 C126,35 140,35 172,35"/><path d="M96,35 C126,35 132,48 172,48"/>
             <path d="M96,35 C126,35 132,60 172,60"/></g>
@@ -310,7 +509,7 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
         </article>
 
         <article class="card" id="f-cluster">
-          <svg viewBox="0 0 200 70">
+          <svg viewBox="0 0 200 70" aria-hidden="true">
             <g stroke="var(--ln2)" fill="none">
               <path d="M60,20 L100,35 M60,50 L100,35 M30,35 L100,35 M100,35 L150,20 M100,35 L150,50"/></g>
             <g fill="var(--rd)"><rect x="55" y="15" width="10" height="10"/><rect x="55" y="45" width="10" height="10"/>
@@ -328,8 +527,8 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
     <div class="grp">
       <div class="grp-h"><b>Look forward</b><span>The only half of the product that can still change an outcome.</span></div>
       <div class="cards">
-        <article class="card" id="f-pre">
-          <svg viewBox="0 0 200 70">
+        <a class="card" href="#f-pre">
+          <svg viewBox="0 0 200 70" aria-hidden="true">
             <rect x="14" y="8" width="172" height="22" fill="none" stroke="var(--ln2)"/>
             <text x="24" y="23" font-family="var(--mono)" font-size="9" fill="var(--g1)">$NEWCOIN</text>
             <rect x="14" y="38" width="172" height="24" fill="rgba(226,59,46,.13)" stroke="var(--rd)"/>
@@ -337,10 +536,11 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
             <text x="37" y="53" font-family="var(--mono)" font-size="8" fill="var(--rd)">2 of your extractors are in here</text></svg>
           <div class="card-t"><h3>Pre-trade check</h3><span class="tier">Pro</span></div>
           <p>Paste a token you're about to enter. If a wallet that has taken from you before is already sitting in that pool, you see it while you can still walk away.</p>
-        </article>
+          <span class="card-go">Why this one matters →</span>
+        </a>
 
         <article class="card" id="f-dist">
-          <svg viewBox="0 0 200 70">
+          <svg viewBox="0 0 200 70" aria-hidden="true">
             <polyline points="14,52 40,44 66,30 92,16 118,20 144,34 170,52" fill="none"
               stroke="var(--g3)" stroke-width="1.5"/>
             <line x1="118" y1="8" x2="118" y2="62" stroke="var(--rd)" stroke-dasharray="3 3"/>
@@ -351,7 +551,7 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
         </article>
 
         <article class="card" id="f-watch">
-          <svg viewBox="0 0 200 70"><g font-family="var(--mono)" font-size="8">
+          <svg viewBox="0 0 200 70" aria-hidden="true"><g font-family="var(--mono)" font-size="8">
             <rect x="14" y="8" width="172" height="20" fill="var(--s2)" stroke="var(--ln)"/>
             <rect x="23" y="15" width="6" height="6" fill="var(--rd)"/>
             <text x="36" y="21" fill="var(--g1)">9mQr…4kR8 opened $DRIFT</text>
@@ -371,8 +571,8 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
     <div class="grp">
       <div class="grp-h"><b>Public pages</b><span>Open, linkable, no account. This is how people find the product.</span></div>
       <div class="cards">
-        <article class="card" id="f-token">
-          <svg viewBox="0 0 200 70">
+        <a class="card" id="f-token" href="exitliquidity-app.html">
+          <svg viewBox="0 0 200 70" aria-hidden="true">
             <text x="14" y="16" font-family="var(--mono)" font-size="9" fill="var(--g1)">$BONKX</text>
             <rect x="14" y="24" width="128" height="22" fill="var(--rd)" opacity=".55"/>
             <rect x="142" y="24" width="44" height="22" fill="var(--wh)" opacity=".3"/>
@@ -380,10 +580,11 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
             <text x="186" y="60" font-family="var(--mono)" font-size="8" fill="var(--g3)" text-anchor="end">14 took</text></svg>
           <div class="card-t"><h3>Token receipt</h3><span class="tier fr">Free</span></div>
           <p>A permanent page for every token: how many wallets funded how few, net dollars transferred, top extractor share, and the fraction of holders who broke even.</p>
-        </article>
+          <span class="card-go">Read one →</span>
+        </a>
 
-        <article class="card" id="f-index">
-          <svg viewBox="0 0 200 70"><g fill="var(--rd)">
+        <a class="card" id="f-index" href="exitliquidity-index.html">
+          <svg viewBox="0 0 200 70" aria-hidden="true"><g fill="var(--rd)">
             <rect x="52" y="8" width="134" height="9" opacity=".8"/><rect x="52" y="22" width="104" height="9" opacity=".6"/>
             <rect x="52" y="36" width="78" height="9" opacity=".45"/><rect x="52" y="50" width="52" height="9" opacity=".3"/></g>
             <g font-family="var(--mono)" font-size="7.5" fill="var(--g3)">
@@ -391,10 +592,11 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
               <text x="14" y="44">03</text><text x="14" y="58">04</text></g></svg>
           <div class="card-t"><h3>Extractor index</h3><span class="tier fr">Free</span></div>
           <p>A live ranking of the wallets taking the most out of Solana over 7, 30 and 90 days. Useful on its own, and the first thing a visitor can read without pasting anything.</p>
-        </article>
+          <span class="card-go">Read the index →</span>
+        </a>
 
-        <article class="card" id="f-lead">
-          <svg viewBox="0 0 200 70">
+        <a class="card" id="f-lead" href="exitliquidity-leadtime.html">
+          <svg viewBox="0 0 200 70" aria-hidden="true">
             <line x1="14" y1="52" x2="186" y2="52" stroke="var(--ln2)"/>
             <polyline points="120,52 138,38 152,14 170,10" fill="none" stroke="var(--g3)" stroke-width="1.5"/>
             <g fill="var(--rd)"><rect x="60" y="46" width="7" height="12"/><rect x="82" y="46" width="7" height="12"/>
@@ -402,7 +604,8 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
             <text x="60" y="34" font-family="var(--mono)" font-size="8" fill="var(--rd)">−41s</text></svg>
           <div class="card-t"><h3>Lead-time radar</h3><span class="tier fr">Free</span></div>
           <p>Ranks wallets by how early they buy relative to the move, not by how much they made. Ranking on profit surfaces whales; ranking on timing surfaces people who knew.</p>
-        </article>
+          <span class="card-go">Read the radar →</span>
+        </a>
       </div>
     </div>
 
@@ -411,7 +614,7 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
       <div class="grp-h"><b>Take it with you</b><span>Out of the browser and into the places you actually trade from.</span></div>
       <div class="cards">
         <article class="card" id="f-card">
-          <svg viewBox="0 0 200 70">
+          <svg viewBox="0 0 200 70" aria-hidden="true">
             <rect x="42" y="6" width="116" height="58" fill="var(--s2)" stroke="var(--ln2)"/>
             <text x="54" y="24" font-family="var(--mono)" font-size="6.5" fill="var(--g3)" letter-spacing="1.6">NET EXTRACTED</text>
             <text x="54" y="46" font-family="var(--sans)" font-size="21" font-weight="300" fill="var(--rd)">$18,412</text>
@@ -421,7 +624,7 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
         </article>
 
         <article class="card" id="f-bot">
-          <svg viewBox="0 0 200 70">
+          <svg viewBox="0 0 200 70" aria-hidden="true">
             <path d="M14,10 H128 V44 H40 L28,56 V44 H14 Z" fill="var(--s2)" stroke="var(--ln2)"/>
             <text x="26" y="26" font-family="var(--mono)" font-size="8" fill="var(--g2)">/trace 7xKq…9fD3</text>
             <text x="26" y="38" font-family="var(--mono)" font-size="8" fill="var(--rd)">−$18,412 · 5 counterparties</text>
@@ -432,7 +635,7 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
         </article>
 
         <article class="card" id="f-api">
-          <svg viewBox="0 0 200 70"><g font-family="var(--mono)" font-size="8" fill="var(--g2)">
+          <svg viewBox="0 0 200 70" aria-hidden="true"><g font-family="var(--mono)" font-size="8" fill="var(--g2)">
             <text x="14" y="18">GET /v1/trace/:wallet</text>
             <text x="14" y="34" fill="var(--g3)">GET /v1/token/:mint</text>
             <text x="14" y="50" fill="var(--g3)">GET /v1/extractor/:addr</text></g>
@@ -441,15 +644,6 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
           <p>A CSV of every realised loss annotated with its counterparty and window, plus raw endpoints if you'd rather build on the engine than look at our screens.</p>
         </article>
       </div>
-    </div>
-  </section>
-
-  <section class="meth" id="method">
-    <div class="sec-k" style="margin:0">Method</div>
-    <div>
-      <p>On an AMM you don't trade against a person, you trade against a pool. No tool can prove wallet A handed money to wallet B, and anything claiming otherwise is selling certainty it doesn't have.</p>
-      <p>What ExitLiquidity measures is <b>overlap</b>. Per pool, buys and sells are netted inside a short window. A wallet reducing supply into the window your position opened is attributed a share of that supply, weighted by size. Every row carries the window it came from, so you can check the attribution instead of trusting it.</p>
-      <p>Realised profit and loss only — open positions are excluded, because an unrealised loss hasn't paid anyone yet. Read-only: pasting an address is the whole authentication model, and there is nothing to connect or approve.</p>
     </div>
   </section>
 
@@ -462,6 +656,7 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
         <ul><li>Three wallet traces a day</li><li>Token receipts and extractor index</li>
           <li>Lead-time radar</li><li>Receipt card and Telegram bot</li></ul>
         <a class="btn btn-o" href="exitliquidity-app.html">Trace a wallet</a>
+        <p class="p-q">On the fourth trace of the day the ledger still renders — counts, totals and the top row stay visible. The addresses below it are held back until the counter resets at 00:00 UTC, or until you upgrade.</p>
       </div>
       <div class="p">
         <div class="p-n">Pro</div><div class="p-v">$29 <small>/ month</small></div>
@@ -469,7 +664,24 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
           <li>Extractor files and cluster maps</li><li>25 watched wallets on Telegram</li>
           <li>CSV export and API access</li></ul>
         <a class="btn btn-r" href="exitliquidity-app.html">Start Pro</a>
+        <p class="p-q">Monthly, cancel any time, no wallet connect at any tier. One pre-trade check that stops one bad entry covers the year.</p>
       </div>
+    </div>
+  </section>
+
+  <section class="wait">
+    <div>
+      <h2>The engine is being built.<br>The index goes up first.</h2>
+      <p>Leave an address and we'll send one email when the extractor index carries real data. Nothing before that, nothing else after it.</p>
+      <small>One email · No launch sequence · Unsubscribe in the same click</small>
+    </div>
+    <div>
+      <form class="field" id="wait-form" novalidate>
+        <input id="wait-mail" type="email" name="email" autocomplete="email"
+          placeholder="you@domain.com" aria-label="Email address" required>
+        <button class="go" type="submit">Notify me</button>
+      </form>
+      <div class="wait-s" id="wait-state" role="status" aria-live="polite"></div>
     </div>
   </section>
 
@@ -478,16 +690,66 @@ footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
     <a class="btn btn-r" href="exitliquidity-app.html">Trace a wallet</a>
   </section>
 
-  <footer><span>ExitLiquidity — prototype</span><span>Figures on this page are illustrative</span></footer>
+  <footer>
+    <span>ExitLiquidity — prototype</span>
+    <nav aria-label="Public pages">
+      <a href="exitliquidity-index.html">Extractor index</a>
+      <a href="exitliquidity-leadtime.html">Lead-time radar</a>
+      <a href="exitliquidity-app.html">Console</a>
+      <a href="#method">Method</a>
+    </nav>
+    <span>Figures on this page are illustrative</span>
+  </footer>
 </div>
 
 <script>
+/* ── mega menu ── */
 const btn=document.getElementById("mbtn"),mega=document.getElementById("mega");
 function setMenu(o){mega.classList.toggle("open",o);btn.setAttribute("aria-expanded",o)}
 btn.addEventListener("click",e=>{e.stopPropagation();setMenu(!mega.classList.contains("open"))});
 mega.addEventListener("click",e=>{if(e.target.closest("a"))setMenu(false)});
 document.addEventListener("click",e=>{if(!mega.contains(e.target)&&e.target!==btn)setMenu(false)});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"){setMenu(false);btn.focus()}});
+
+/* Arrow keys inside the open menu — twelve links behind one toggle is a lot to
+   reach one Tab at a time. */
+mega.addEventListener("keydown",e=>{
+  if(e.key!=="ArrowDown"&&e.key!=="ArrowUp")return;
+  const links=[...mega.querySelectorAll("a")],i=links.indexOf(document.activeElement);
+  if(i===-1)return;
+  e.preventDefault();
+  links[(i+(e.key==="ArrowDown"?1:links.length-1))%links.length].focus();
+});
+
+/* ── hero trace field ── */
+const addr=document.getElementById("addr"),addrNote=document.getElementById("addr-note");
+const NOTE="Three free traces a day · No wallet connect · Read-only";
+document.querySelectorAll("[data-fill]").forEach(chip=>{
+  chip.addEventListener("click",()=>{addr.value=chip.dataset.fill;addr.focus()});
+});
+document.getElementById("trace-form").addEventListener("submit",e=>{
+  /* Base58 has no 0, O, I or l, and a Solana address is 32-44 of what's left.
+     Catching a truncated paste here costs nothing; a round trip does. */
+  const v=addr.value.trim();
+  if(!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v)){
+    e.preventDefault();
+    addr.setAttribute("aria-invalid","true");
+    addrNote.textContent=v===""?"Paste a Solana address to start":"That isn't a Solana address — check for a truncated paste";
+    addr.focus();
+  }
+});
+addr.addEventListener("input",()=>{addr.removeAttribute("aria-invalid");addrNote.textContent=NOTE});
+
+/* ── waitlist ──
+   There is no backend yet. Saying "you're on the list" would be a lie, and the
+   whole argument of this page is that it doesn't assert what it can't back. */
+const waitForm=document.getElementById("wait-form"),waitState=document.getElementById("wait-state");
+waitForm.addEventListener("submit",e=>{
+  e.preventDefault();
+  const mail=document.getElementById("wait-mail");
+  if(!mail.checkValidity()){waitState.textContent="That doesn't look like an email address.";mail.focus();return}
+  waitState.innerHTML="<b>Prototype — not wired up.</b> Point this form at the capture endpoint when the backend lands at P3.";
+});
 </script>
 </body>
 </html>
