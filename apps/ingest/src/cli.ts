@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { AppError, ConfigError, describeError } from '@exitliquidity/core';
+import { AbortedError, AppError, ConfigError, describeError } from '@exitliquidity/core';
 import {
   backfill,
   dumpTransaction,
@@ -221,6 +221,12 @@ main(process.argv.slice(2))
     const described = describeError(error);
     process.stderr.write(`${JSON.stringify(described, null, 2)}\n`);
     // Configuration problems get their own code so a supervisor can tell
-    // "restart me" from "I will never start".
-    process.exitCode = error instanceof AppError && error.code === 'CONFIG' ? 78 : 1;
+    // "restart me" from "I will never start". An interrupted run gets 130, the
+    // shell's convention for SIGINT, so a Ctrl+C is never read as a crash.
+    process.exitCode =
+      error instanceof AbortedError
+        ? 130
+        : error instanceof AppError && error.code === 'CONFIG'
+          ? 78
+          : 1;
   });

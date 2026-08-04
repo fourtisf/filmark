@@ -180,8 +180,17 @@ export class SolanaRpcClient {
 
           if (!response.ok) {
             // 429 and 5xx are the shapes rate limits and provider hiccups take.
+            // The body is where the provider says which limit was hit and for
+            // how long; a bare status number sends the operator guessing.
+            const text = await response.text().catch(() => '<unreadable>');
             throw new UpstreamError(`RPC ${method} returned HTTP ${response.status}`, {
-              context: { method, status: response.status, attempt },
+              context: {
+                method,
+                status: response.status,
+                attempt,
+                retryAfter: response.headers.get('retry-after'),
+                body: text.slice(0, 500),
+              },
             });
           }
 
@@ -197,9 +206,17 @@ export class SolanaRpcClient {
           return body.result;
         } catch (error) {
           if (error instanceof UpstreamError) throw error;
+          // The identity of the underlying failure goes into context as well as
+          // cause: context survives JSON.stringify at the CLI boundary, which is
+          // where an operator reads it, and cause only survives describeError.
           throw new UpstreamError(`RPC ${method} failed`, {
             cause: error,
-            context: { method, attempt },
+            context: {
+              method,
+              attempt,
+              causeName: error instanceof Error ? error.name : typeof error,
+              causeMessage: error instanceof Error ? error.message : String(error),
+            },
           });
         } finally {
           clearTimeout(timer);
@@ -225,14 +242,26 @@ export class SolanaRpcClient {
 /**
  * -32602 and friends mean the request itself is wrong; retrying just burns
  * quota. Everything else is treated as transient.
+ *
+ * -32603 is deliberately absent from that set. It is JSON-RPC *Internal error*
+ * — a fault on the server's side, and the generic bucket providers empty
+ * overload into. Treating it as permanent gave up on attempt zero, and
+ * `getSignaturesForAddress` has no catch around it, so one of them ended the
+ * entire crawl.
  */
 function rpcError(method: string, error: JsonRpcError, attempt: number): Error {
-  const permanent = new Set([-32600, -32601, -32602, -32603]);
+  const permanent = new Set([-32600, -32601, -32602]);
+  const context = {
+    method,
+    code: error.code,
+    attempt,
+    ...(error.data === undefined ? {} : { data: error.data }),
+  };
   const message = `RPC ${method} error ${error.code}: ${error.message}`;
   if (permanent.has(error.code)) {
-    const err = new UpstreamError(message, { context: { method, code: error.code, attempt } });
+    const err = new UpstreamError(message, { context });
     Object.defineProperty(err, 'retryable', { value: false });
     return err;
   }
-  return new UpstreamError(message, { context: { method, code: error.code, attempt } });
+  return new UpstreamError(message, { context });
 }

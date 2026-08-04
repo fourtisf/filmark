@@ -53,6 +53,9 @@ export async function retry<T>(
   options: RetryOptions,
 ): Promise<T> {
   const { maxAttempts, signal, shouldRetry = (error) => isRetryable(error), onRetry } = options;
+  // Without this the loop body never runs and the throw below rethrows
+  // undefined — an error with no name, no message and no stack.
+  if (maxAttempts < 1) throw new RangeError('maxAttempts must be >= 1');
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -94,11 +97,20 @@ export class RateLimiter {
   }
 }
 
-/** Runs `items` through `worker` with a bounded number in flight, preserving order. */
+/**
+ * Runs `items` through `worker` with a bounded number in flight, preserving order.
+ *
+ * The signal is checked before each item is claimed. Without it, a worker that
+ * swallows its own errors turns one abort into one failure per remaining item:
+ * the runners keep claiming indices, each call fails instantly with no I/O, and
+ * a single Ctrl+C prints a wall of identical errors that buries what actually
+ * happened. Cancellation has to stop the loop, not just the work inside it.
+ */
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   concurrency: number,
   worker: (item: T, index: number) => Promise<R>,
+  signal?: AbortSignal,
 ): Promise<R[]> {
   if (concurrency < 1) throw new RangeError('concurrency must be >= 1');
   const results = new Array<R>(items.length);
@@ -106,6 +118,7 @@ export async function mapWithConcurrency<T, R>(
 
   const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     for (;;) {
+      if (signal?.aborted === true) throw new AbortedError('Aborted during mapWithConcurrency');
       const index = cursor;
       cursor += 1;
       if (index >= items.length) return;

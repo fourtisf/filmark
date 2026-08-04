@@ -1,5 +1,6 @@
 import {
   createIngestMetrics,
+  describeError,
   createLogger,
   loadConfig,
   requireRpcUrl,
@@ -132,7 +133,7 @@ export function createServices(options: CreateServicesOptions = {}): Services {
     async close() {
       // Flush before closing the connection, or the last partial batch is lost.
       await writer.close().catch((error: unknown) => {
-        logger.error({ err: error }, 'failed to flush writer during shutdown');
+        logger.error({ err: describeError(error) }, 'failed to flush writer during shutdown');
       });
       await clickhouse.close();
     },

@@ -76,11 +76,72 @@ export function isRetryable(error: unknown): boolean {
   return error instanceof AppError && error.retryable;
 }
 
-/** Turns anything thrown into something loggable without losing the stack. */
-export function describeError(error: unknown): Record<string, unknown> {
-  if (error instanceof AppError) return { ...error.toJSON(), stack: error.stack };
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message, stack: error.stack };
+/**
+ * Turns anything thrown into something loggable without losing the stack.
+ *
+ * The cause chain is walked, because the wrapping this codebase does is exactly
+ * where the useful part lives: an `UpstreamError('RPC getTransaction failed')`
+ * says nothing on its own, and the `TypeError: fetch failed` -> `ECONNRESET`
+ * underneath it is the whole diagnosis. `AppError.toJSON()` omits `cause` and
+ * pino cannot reach it either, so an unwalked chain is an unloggable one.
+ *
+ * `seen` guards a cycle: a wrapper holds a reference to what it wrapped, and a
+ * self-referencing chain would otherwise recurse until the stack goes — inside
+ * a catch handler, which is the worst place to fail.
+ */
+export function describeError(
+  error: unknown,
+  seen: Set<unknown> = new Set<unknown>(),
+): Record<string, unknown> {
+  if (error === null || error === undefined) {
+    return { name: 'UnknownError', message: String(error) };
   }
-  return { name: 'UnknownError', message: String(error) };
+  if (seen.has(error)) return { name: 'CircularCause', message: '[circular]' };
+  seen.add(error);
+
+  const cause = (error as { cause?: unknown }).cause;
+  const chained =
+    cause === undefined || cause === null ? {} : { cause: describeError(cause, seen) };
+
+  if (error instanceof AppError) return { ...error.toJSON(), stack: error.stack, ...chained };
+  if (error instanceof Error) {
+    // Node attaches these to system errors and they are the first thing worth
+    // reading — ECONNRESET, ENOTFOUND, ETIMEDOUT all arrive this way.
+    const extra: Record<string, unknown> = {};
+    for (const key of ['code', 'errno', 'syscall'] as const) {
+      const value = (error as unknown as Record<string, unknown>)[key];
+      if (value !== undefined) extra[key] = value;
+    }
+    return { name: error.name, message: error.message, stack: error.stack, ...extra, ...chained };
+  }
+  return { name: 'UnknownError', message: stringifyThrown(error) };
+}
+
+/**
+ * Renders a thrown non-Error.
+ *
+ * `String({ code: 'X' })` is "[object Object]", which loses the only thing the
+ * value carried. JSON at least keeps the fields.
+ */
+function stringifyThrown(value: NonNullable<unknown>): string {
+  switch (typeof value) {
+    case 'string':
+      return value;
+    case 'number':
+    case 'boolean':
+    case 'bigint':
+      return String(value);
+    case 'symbol':
+      return value.toString();
+    case 'function':
+      return `[function ${value.name}]`;
+    default:
+      try {
+        // Circular or BigInt-bearing objects make this throw, and a describer
+        // that throws inside a catch handler loses the original error entirely.
+        return JSON.stringify(value) ?? Object.prototype.toString.call(value);
+      } catch {
+        return Object.prototype.toString.call(value);
+      }
+  }
 }

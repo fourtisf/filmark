@@ -53,7 +53,6 @@ export interface BackfillRunnerOptions {
   readonly defaultDays?: number;
   readonly pageSize?: number;
   readonly transactionBatch?: number;
-  readonly concurrency?: number;
 }
 
 /**
@@ -93,7 +92,14 @@ export class BackfillRunner {
     let reachedCutoff = false;
 
     this.#logger.info(
-      { address: request.address, cutoffSec, until: request.untilSignature },
+      {
+        address: request.address,
+        cutoffSec,
+        until: request.untilSignature,
+        pageSize,
+        batchSize,
+        maxTransactions,
+      },
       'starting backfill',
     );
 
@@ -117,8 +123,13 @@ export class BackfillRunner {
         if (entry.blockTime !== null && entry.blockTime < cutoffSec) {
           reachedCutoff = true;
           before = entry.signature;
-          if (wanted.length > 0) {
-            const partial = await this.#processBatch(wanted, batchSize, signal);
+          const cutoffBudget = maxTransactions - transactionsFetched;
+          if (wanted.length > 0 && cutoffBudget > 0) {
+            const partial = await this.#processBatch(
+              wanted.slice(0, cutoffBudget),
+              batchSize,
+              signal,
+            );
             transactionsFetched += partial.fetched;
             transactionsMissing += partial.missing;
             swapsWritten += partial.swaps;
@@ -137,7 +148,14 @@ export class BackfillRunner {
         wanted.push(entry);
       }
 
-      const processed = await this.#processBatch(wanted, batchSize, signal);
+      // The cap has to be applied before the fetch, not after it. Consulted only
+      // at the bottom of this loop, `--max 20` still queued a whole page — up to
+      // a thousand getTransaction calls, each spaced by the rate limiter — and
+      // decided nothing except whether to pull a second page.
+      const budget = maxTransactions - transactionsFetched;
+      if (budget <= 0) break;
+
+      const processed = await this.#processBatch(wanted.slice(0, budget), batchSize, signal);
       transactionsFetched += processed.fetched;
       transactionsMissing += processed.missing;
       swapsWritten += processed.swaps;
@@ -145,8 +163,8 @@ export class BackfillRunner {
       oldestBlockTime = minOrNull(oldestBlockTime, processed.oldest);
       newestBlockTime = maxOrNull(newestBlockTime, processed.newest);
 
-      this.#logger.debug(
-        { address: request.address, signaturesScanned, swapsWritten },
+      this.#logger.info(
+        { address: request.address, signaturesScanned, transactionsFetched, swapsWritten },
         'backfill page complete',
       );
 
@@ -192,20 +210,39 @@ export class BackfillRunner {
     let oldest: number | null = null;
     let newest: number | null = null;
 
-    const responses = await mapWithConcurrency(signatures, batchSize, async (entry) => {
-      try {
-        return await this.#options.rpc.getTransaction(entry.signature, signal);
-      } catch (error) {
-        // One unfetchable transaction must not abandon the whole crawl; it is
-        // counted so the shortfall is visible in the result.
-        this.#options.metrics.errors.inc({ stage: 'backfill_fetch' });
-        this.#logger.warn(
-          { signature: entry.signature, err: describeError(error) },
-          'could not fetch transaction during backfill',
-        );
-        return null;
-      }
-    });
+    let done = 0;
+    const responses = await mapWithConcurrency(
+      signatures,
+      batchSize,
+      async (entry) => {
+        try {
+          return await this.#options.rpc.getTransaction(entry.signature, signal);
+        } catch (error) {
+          // A shutdown is not an unfetchable transaction. Counting it as one
+          // turns a single Ctrl+C into one bogus warning per remaining
+          // signature and inflates the error metric by the length of the page.
+          if (error instanceof AbortedError) throw error;
+          // One genuinely unfetchable transaction must not abandon the whole
+          // crawl; it is counted so the shortfall is visible in the result.
+          this.#options.metrics.errors.inc({ stage: 'backfill_fetch' });
+          this.#logger.warn(
+            { signature: entry.signature, err: describeError(error) },
+            'could not fetch transaction during backfill',
+          );
+          return null;
+        } finally {
+          // Inside the worker, not after the map: a line printed once the page
+          // is done arrives after all the waiting is over, which is exactly
+          // when nobody needs it. At a low rate limit this is the only
+          // evidence the process is alive.
+          done += 1;
+          if (done % 25 === 0 || done === signatures.length) {
+            this.#logger.info({ done, total: signatures.length }, 'backfill fetch progress');
+          }
+        }
+      },
+      signal,
+    );
 
     for (const response of responses) {
       if (response === null) {

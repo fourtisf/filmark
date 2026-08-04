@@ -1,4 +1,5 @@
 import {
+  describeError,
   nowSeconds,
   silentLogger,
   type IngestMetrics,
@@ -85,7 +86,7 @@ export class SwapPipeline {
       this.#metrics.dropped.inc({ reason: 'context_error', source });
       this.#metrics.errors.inc({ stage: 'context' });
       this.#logger.warn(
-        { signature: raw.signature, err: error },
+        { signature: raw.signature, err: describeError(error) },
         'could not build transaction context',
       );
       return EMPTY;

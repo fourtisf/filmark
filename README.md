@@ -134,6 +134,29 @@ different things is worse than none:
   ours. A small difference near the boundary is expected, and is why the
   tolerance is 2% rather than zero.
 
+### When a backfill misbehaves
+
+Run the CLI directly rather than through `pnpm --filter`. pnpm spawns a shell that
+does not `exec` away, so on Ctrl+C it reports `Command failed with signal "SIGINT"`
+and the process's real exit code never surfaces — including a clean `0`.
+
+```bash
+node --import tsx apps/ingest/src/cli.ts backfill <MINT> --days 1 --max 5; echo "exit=$?"
+```
+
+`--max` caps transactions fetched, so `--max 5` is five `getTransaction` calls and
+finishes in seconds even at one request per second. A backfill prints
+`backfill fetch progress` every 25 transactions; silence for minutes means the
+process is not doing what you asked.
+
+Exit codes: `0` success, `1` failure, `78` bad configuration, `130` interrupted.
+
+Every error carries its cause chain, so an upstream failure reads as
+`RPC getTransaction failed: fetch failed: read ECONNRESET` rather than the wrapper
+alone, and an HTTP error carries the provider's response body and `Retry-After`
+beside the status. If a run is ever hard to diagnose from its output, that is a
+bug in the logging and worth fixing before the thing it was hiding.
+
 **Before trusting any of this against mainnet, work through
 [`docs/verification.md`](docs/verification.md).** Every program constant in this
 repo is derived or documented rather than observed, and that document says

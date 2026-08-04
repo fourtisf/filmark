@@ -147,6 +147,14 @@ describe('retry', () => {
       retry(async () => 'never', { maxAttempts: 3, minMs: 1, maxMs: 2, signal: controller.signal }),
     ).rejects.toThrow(AbortedError);
   });
+
+  it('rejects a zero attempt budget instead of throwing undefined', async () => {
+    // The loop body never runs, so the trailing `throw lastError` used to throw
+    // undefined — an error with no name, no message and no stack.
+    await expect(
+      retry(async () => 'never', { maxAttempts: 0, minMs: 1, maxMs: 2 }),
+    ).rejects.toThrow(RangeError);
+  });
 });
 
 describe('sleep', () => {
@@ -202,6 +210,35 @@ describe('mapWithConcurrency', () => {
 
   it('handles an empty input', async () => {
     expect(await mapWithConcurrency([], 4, async () => 1)).toEqual([]);
+  });
+
+  it('stops claiming work once the signal aborts', async () => {
+    // The bug this pins: a worker that swallows its own errors used to let the
+    // runners walk the entire remaining array after an abort, each item failing
+    // instantly with no I/O. One Ctrl+C became one error line per item.
+    const controller = new AbortController();
+    const items = Array.from({ length: 500 }, (_, i) => i);
+    let started = 0;
+
+    const promise = mapWithConcurrency(
+      items,
+      4,
+      async (item) => {
+        started += 1;
+        if (item === 10) controller.abort();
+        // A worker that never rethrows — the shape the backfill runner had.
+        try {
+          await sleep(1);
+        } catch {
+          /* swallowed on purpose */
+        }
+        return item;
+      },
+      controller.signal,
+    );
+
+    await expect(promise).rejects.toBeInstanceOf(AbortedError);
+    expect(started).toBeLessThan(items.length);
   });
 });
 
@@ -287,6 +324,40 @@ describe('errors', () => {
       context: { rows: 3 },
     });
     expect(describeError('a string')).toMatchObject({ name: 'UnknownError', message: 'a string' });
+  });
+
+  it('walks the cause chain, which is where the diagnosis actually lives', () => {
+    // The shape the RPC client produces: a generic wrapper over the real fault.
+    // Without this, six rounds of debugging can read "RPC getTransaction failed"
+    // and learn nothing about why.
+    const transport = Object.assign(new Error('read ECONNRESET'), {
+      code: 'ECONNRESET',
+      syscall: 'read',
+    });
+    const wrapper = new StorageError('RPC getTransaction failed', { cause: transport });
+
+    const described = describeError(wrapper);
+
+    expect(described).toMatchObject({
+      code: 'STORAGE',
+      message: 'RPC getTransaction failed',
+      cause: { name: 'Error', message: 'read ECONNRESET', code: 'ECONNRESET', syscall: 'read' },
+    });
+  });
+
+  it('survives a cause that points back at itself', () => {
+    const a = new Error('a');
+    const b = new Error('b', { cause: a });
+    (a as Error & { cause?: unknown }).cause = b;
+
+    expect(describeError(b)).toMatchObject({
+      message: 'b',
+      cause: { message: 'a', cause: { name: 'CircularCause' } },
+    });
+  });
+
+  it('does not choke on a thrown null', () => {
+    expect(describeError(null)).toMatchObject({ name: 'UnknownError', message: 'null' });
   });
 });
 
