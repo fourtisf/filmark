@@ -1,5 +1,6 @@
 import {
   AbortedError,
+  chunk,
   daysToSeconds,
   describeError,
   mapWithConcurrency,
@@ -210,39 +211,50 @@ export class BackfillRunner {
     let oldest: number | null = null;
     let newest: number | null = null;
 
+    // One HTTP request carries many transactions, so the unit of work here is a
+    // group rather than a signature. `batchSize` keeps its old meaning —
+    // transactions in flight — which is why the concurrency is derived from it
+    // rather than used directly: twenty in flight is one request of twenty, not
+    // twenty requests. With batching turned off the two are identical again.
+    const groupSize = Math.max(1, this.#options.rpc.transactionBatchSize);
+    const groups = chunk([...signatures], groupSize);
+    const inFlight = Math.max(1, Math.ceil(batchSize / groupSize));
+
     let done = 0;
-    const responses = await mapWithConcurrency(
-      signatures,
-      batchSize,
-      async (entry) => {
+    const grouped = await mapWithConcurrency(
+      groups,
+      inFlight,
+      async (group) => {
         try {
-          return await this.#options.rpc.getTransaction(entry.signature, signal);
+          return await this.#options.rpc.getTransactions(
+            group.map((entry) => entry.signature),
+            signal,
+          );
         } catch (error) {
           // A shutdown is not an unfetchable transaction. Counting it as one
           // turns a single Ctrl+C into one bogus warning per remaining
           // signature and inflates the error metric by the length of the page.
           if (error instanceof AbortedError) throw error;
-          // One genuinely unfetchable transaction must not abandon the whole
-          // crawl; it is counted so the shortfall is visible in the result.
+          // A genuinely unfetchable group must not abandon the whole crawl; it
+          // is counted so the shortfall is visible in the result.
           this.#options.metrics.errors.inc({ stage: 'backfill_fetch' });
           this.#logger.warn(
-            { signature: entry.signature, err: describeError(error) },
-            'could not fetch transaction during backfill',
+            { signatures: group.length, from: group[0]?.signature, err: describeError(error) },
+            'could not fetch a batch of transactions during backfill',
           );
-          return null;
+          return group.map(() => null);
         } finally {
           // Inside the worker, not after the map: a line printed once the page
           // is done arrives after all the waiting is over, which is exactly
           // when nobody needs it. At a low rate limit this is the only
           // evidence the process is alive.
-          done += 1;
-          if (done % 25 === 0 || done === signatures.length) {
-            this.#logger.info({ done, total: signatures.length }, 'backfill fetch progress');
-          }
+          done += group.length;
+          this.#logger.info({ done, total: signatures.length }, 'backfill fetch progress');
         }
       },
       signal,
     );
+    const responses = grouped.flat();
 
     for (const response of responses) {
       if (response === null) {

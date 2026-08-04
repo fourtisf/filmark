@@ -76,6 +76,7 @@ export function createServices(options: CreateServicesOptions = {}): Services {
       : new SolanaRpcClient({
           url: requireRpcUrl(config),
           maxRequestsPerSecond: config.SOLANA_RPC_MAX_RPS,
+          batchSize: config.SOLANA_RPC_BATCH_SIZE,
           maxAttempts: config.SOLANA_RPC_MAX_ATTEMPTS,
           timeoutMs: config.SOLANA_RPC_TIMEOUT_MS,
           logger,

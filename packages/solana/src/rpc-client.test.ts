@@ -38,6 +38,113 @@ const rpcFault = (code: number, message: string): Response =>
     headers: { 'content-type': 'application/json' },
   });
 
+describe('SolanaRpcClient batching', () => {
+  /** Captures the request bodies so the number of round trips can be counted. */
+  function batchClient(
+    respond: (requests: { id: number; params: unknown[] }[]) => Response,
+    batchSize = 20,
+  ): { client: SolanaRpcClient; bodies: () => unknown[][] } {
+    const bodies: unknown[][] = [];
+    const client = new SolanaRpcClient({
+      url: 'https://rpc.invalid',
+      maxRequestsPerSecond: 1000,
+      batchSize,
+      logger: silentLogger,
+      fetchImpl: async (_url, init): Promise<Response> => {
+        const parsed = JSON.parse((init?.body ?? '[]') as string) as {
+          id: number;
+          params: unknown[];
+        }[];
+        bodies.push(parsed);
+        return respond(parsed);
+      },
+    });
+    return { client, bodies: () => bodies };
+  }
+
+  const batchOk = (requests: { id: number; params: unknown[] }[], shuffle = false): Response => {
+    const messages = requests.map((request) => ({
+      jsonrpc: '2.0',
+      id: request.id,
+      result: {
+        slot: 1,
+        blockTime: 1,
+        transaction: {
+          signatures: [request.params[0]],
+          message: { accountKeys: [], instructions: [] },
+        },
+        meta: { err: null },
+      },
+    }));
+    return new Response(JSON.stringify(shuffle ? [...messages].reverse() : messages), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  it('sends one request for a whole group', async () => {
+    // The reason this exists: 200 transactions was 200 round trips against an
+    // endpoint that rate-limits per RPC call.
+    const { client, bodies } = batchClient((r) => batchOk(r), 20);
+    const signatures = Array.from({ length: 40 }, (_, i) => `sig${i}`);
+
+    const results = await client.getTransactions(signatures);
+
+    expect(results).toHaveLength(40);
+    expect(bodies()).toHaveLength(2); // 40 signatures, 20 per request
+    expect(bodies()[0]).toHaveLength(20);
+  });
+
+  it('returns results in the order asked, not the order answered', async () => {
+    // JSON-RPC does not promise ordering, and the runner pairs responses to
+    // signatures positionally. Getting this wrong would attribute every swap in
+    // a batch to the wrong transaction.
+    const { client } = batchClient((r) => batchOk(r, true), 5);
+
+    const results = await client.getTransactions(['a', 'b', 'c']);
+
+    expect(results.map((r) => r?.transaction.signatures[0])).toEqual(['a', 'b', 'c']);
+  });
+
+  it('retries the group when one entry comes back with a server-side error', async () => {
+    let call = 0;
+    const { client } = batchClient((requests) => {
+      call += 1;
+      if (call === 1) {
+        const first = requests[0] as { id: number };
+        return new Response(
+          JSON.stringify([{ jsonrpc: '2.0', id: first.id, error: { code: -32603, message: 'x' } }]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return batchOk(requests);
+    }, 5);
+
+    await expect(client.getTransactions(['a'])).resolves.toHaveLength(1);
+    expect(call).toBe(2);
+  });
+
+  it('falls back to one request per signature when batching is off', async () => {
+    const { client, bodies } = batchClient(
+      (r) =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: (r as unknown as { id: number }).id,
+            result: null,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      1,
+    );
+
+    const results = await client.getTransactions(['a', 'b', 'c']);
+
+    expect(results).toEqual([null, null, null]);
+    expect(bodies()).toHaveLength(3);
+  });
+});
+
 describe('SolanaRpcClient error reporting', () => {
   it('carries the HTTP body and Retry-After on a rate limit', async () => {
     // A bare "returned HTTP 429" tells an operator nothing about which limit was

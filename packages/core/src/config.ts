@@ -46,6 +46,8 @@ const configSchema = z.object({
   SOLANA_RPC_MAX_RPS: positiveInt.default(10),
   SOLANA_RPC_MAX_ATTEMPTS: positiveInt.default(5),
   SOLANA_RPC_TIMEOUT_MS: positiveInt.default(20_000),
+  /** Transactions per JSON-RPC batch request. 1 disables batching. */
+  SOLANA_RPC_BATCH_SIZE: positiveInt.default(20),
 
   PYTH_HERMES_URL: z.string().url().default('https://hermes.pyth.network'),
   PYTH_BENCHMARKS_URL: z.string().url().default('https://benchmarks.pyth.network'),

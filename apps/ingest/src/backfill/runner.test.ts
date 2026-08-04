@@ -34,8 +34,19 @@ function harness(
   const fetched: string[] = [];
   let page = 0;
 
-  const rpc = {
+  const rpc: {
+    getSignaturesForAddress: () => Promise<SignatureInfo[]>;
+    getTransactions: (sigs: readonly string[]) => Promise<unknown[]>;
+    getTransaction: (signature: string) => Promise<unknown>;
+    transactionBatchSize: number;
+  } = {
     getSignaturesForAddress: async (): Promise<SignatureInfo[]> => pages[page++] ?? [],
+    transactionBatchSize: 1,
+    getTransactions: async (sigs: readonly string[]): Promise<unknown[]> => {
+      const out: unknown[] = [];
+      for (const signature of sigs) out.push(await rpc.getTransaction(signature));
+      return out;
+    },
     getTransaction: async (signature: string): Promise<unknown> => {
       onFetch?.(signature, fetched.length);
       fetched.push(signature);
@@ -49,7 +60,7 @@ function harness(
         meta: { err: null },
       };
     },
-  } as unknown as SolanaRpcClient;
+  };
 
   const pipeline = {
     process: async () => ({ swaps: [], skips: [] }),
@@ -61,7 +72,7 @@ function harness(
   } as unknown as SwapWriter;
 
   const runner = new BackfillRunner({
-    rpc,
+    rpc: rpc as unknown as SolanaRpcClient,
     pipeline,
     writer,
     metrics: createIngestMetrics(new MetricsRegistry()),

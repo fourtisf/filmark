@@ -1,5 +1,6 @@
 import {
   RateLimiter,
+  chunk,
   UpstreamError,
   describeError,
   retry,
@@ -15,6 +16,8 @@ export interface SolanaRpcOptions {
   readonly maxRequestsPerSecond?: number;
   readonly maxAttempts?: number;
   readonly timeoutMs?: number;
+  /** Transactions per JSON-RPC batch request. 1 disables batching. */
+  readonly batchSize?: number;
   readonly commitment?: Commitment;
   readonly logger?: Logger;
   readonly fetchImpl?: typeof fetch;
@@ -61,6 +64,7 @@ export class SolanaRpcClient {
   readonly #limiter: RateLimiter;
   readonly #maxAttempts: number;
   readonly #timeoutMs: number;
+  readonly #batchSize: number;
   readonly #commitment: Commitment;
   readonly #logger: Logger;
   readonly #fetch: typeof fetch;
@@ -71,6 +75,7 @@ export class SolanaRpcClient {
     this.#limiter = new RateLimiter(options.maxRequestsPerSecond ?? 10);
     this.#maxAttempts = options.maxAttempts ?? 5;
     this.#timeoutMs = options.timeoutMs ?? 20_000;
+    this.#batchSize = Math.max(1, options.batchSize ?? 20);
     this.#commitment = options.commitment ?? 'confirmed';
     this.#logger = options.logger ?? silentLogger;
     this.#fetch = options.fetchImpl ?? globalThis.fetch;
@@ -132,6 +137,92 @@ export class SolanaRpcClient {
     );
   }
 
+  /** How many transactions one `getTransactions` request carries. */
+  get transactionBatchSize(): number {
+    return this.#batchSize;
+  }
+
+  /**
+   * Transactions for many signatures, in the order requested, null where one has
+   * been pruned or is not yet available.
+   *
+   * One HTTP request per `batchSize` signatures. Public endpoints rate-limit per
+   * RPC call, and a crawl that opens a connection per transaction spends its
+   * entire budget on round trips: 200 transactions is 200 requests one way and
+   * ten the other. JSON-RPC batching is in the 2.0 spec and Solana serves it.
+   */
+  async getTransactions(
+    signatures: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<(RpcTransactionResponse | null)[]> {
+    if (signatures.length === 0) return [];
+
+    if (this.#batchSize === 1) {
+      const out: (RpcTransactionResponse | null)[] = [];
+      for (const signature of signatures) out.push(await this.getTransaction(signature, signal));
+      return out;
+    }
+
+    const out: (RpcTransactionResponse | null)[] = [];
+    for (const group of chunk([...signatures], this.#batchSize)) {
+      out.push(...(await this.#transactionBatch(group, signal)));
+    }
+    return out;
+  }
+
+  async #transactionBatch(
+    signatures: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<(RpcTransactionResponse | null)[]> {
+    const requests = signatures.map((signature) => ({
+      jsonrpc: '2.0' as const,
+      id: this.#nextId++,
+      method: 'getTransaction',
+      params: [
+        signature,
+        {
+          encoding: 'json',
+          commitment: this.#commitment === 'processed' ? 'confirmed' : this.#commitment,
+          maxSupportedTransactionVersion: 0,
+        },
+      ],
+    }));
+
+    return this.#send<(RpcTransactionResponse | null)[]>(
+      'getTransaction[batch]',
+      requests,
+      (body, attempt) => {
+        if (!Array.isArray(body)) {
+          // A gateway that rejects the batch outright answers with one error
+          // object rather than an array. Surface its reason, not a shape error.
+          const single = body as JsonRpcResponse<unknown>;
+          if (single.error !== undefined) throw rpcError('getTransaction', single.error, attempt);
+          throw new UpstreamError('RPC batch did not return an array', {
+            context: { method: 'getTransaction', attempt, size: requests.length },
+          });
+        }
+
+        // A batch response may come back in any order; the ids tie it together.
+        const byId = new Map<number | string, JsonRpcResponse<RpcTransactionResponse | null>>();
+        for (const message of body as JsonRpcResponse<RpcTransactionResponse | null>[]) {
+          byId.set(message.id, message);
+        }
+
+        return requests.map((request) => {
+          const message = byId.get(request.id);
+          if (message === undefined) {
+            throw new UpstreamError('RPC batch response is missing a request id', {
+              context: { method: 'getTransaction', attempt, id: request.id },
+            });
+          }
+          if (message.error !== undefined) throw rpcError('getTransaction', message.error, attempt);
+          return message.result ?? null;
+        });
+      },
+      signal,
+    );
+  }
+
   /**
    * Decimals for each mint, in the order requested. Null where the account is
    * missing or is not a mint.
@@ -157,10 +248,41 @@ export class SolanaRpcClient {
   }
 
   async #call<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T> {
+    const id = this.#nextId++;
+    return this.#send<T>(
+      method,
+      { jsonrpc: '2.0', id, method, params },
+      (body, attempt) => {
+        const message = body as JsonRpcResponse<T>;
+        if (message.error !== undefined) throw rpcError(method, message.error, attempt);
+        if (message.result === undefined) {
+          throw new UpstreamError(`RPC ${method} returned neither result nor error`, {
+            context: { method, attempt },
+          });
+        }
+        return message.result;
+      },
+      signal,
+    );
+  }
+
+  /**
+   * One HTTP round trip, retried.
+   *
+   * `parse` runs inside the retry so a JSON-RPC level fault — a -32603, a
+   * truncated body — gets another attempt on the same terms as a 429. Pulling it
+   * out would quietly make every server-side error permanent.
+   */
+  async #send<T>(
+    label: string,
+    payload: unknown,
+    parse: (body: unknown, attempt: number) => T,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const method = label;
     return retry(
       async (attempt) => {
         await this.#limiter.acquire(signal);
-        const id = this.#nextId++;
         const controller = new AbortController();
         const timer = setTimeout(() => {
           controller.abort();
@@ -174,7 +296,7 @@ export class SolanaRpcClient {
           const response = await this.#fetch(this.#url, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+            body: JSON.stringify(payload),
             signal: controller.signal,
           });
 
@@ -194,16 +316,8 @@ export class SolanaRpcClient {
             });
           }
 
-          const body = (await response.json()) as JsonRpcResponse<T>;
-          if (body.error !== undefined) {
-            throw rpcError(method, body.error, attempt);
-          }
-          if (body.result === undefined) {
-            throw new UpstreamError(`RPC ${method} returned neither result nor error`, {
-              context: { method, attempt },
-            });
-          }
-          return body.result;
+          const body: unknown = await response.json();
+          return parse(body, attempt);
         } catch (error) {
           if (error instanceof UpstreamError) throw error;
           // The identity of the underlying failure goes into context as well as
