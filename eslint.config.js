@@ -45,6 +45,19 @@ export default defineConfig(
     },
   },
   {
+    // Build scripts run under Node with browser globals reachable inside
+    // page.evaluate callbacks, and print to stdout on purpose.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { console: 'readonly', process: 'readonly', URL: 'readonly', document: 'readonly' },
+    },
+    rules: {
+      'no-undef': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+    },
+  },
+  {
     // Tests build deliberately malformed inputs and stub interfaces down to
     // the few members under test.
     files: ['**/*.test.ts', '**/testing.ts'],

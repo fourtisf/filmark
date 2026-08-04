@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The fixed pages. The two that scale — one page per token and one per
+  counterparty — are generated at build time into sitemap-tokens.xml and
+  sitemap-extractors.xml, which is why they are separate files: a sitemap caps
+  at 50,000 URLs and those two will pass it.
+
+  See docs/url-scheme.md for the full route table.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://exitliquidity.xyz/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+
+  <!-- One URL per window. The window is in the path, not a query parameter,
+       so all three are separately indexable and each canonicalises to itself. -->
+  <url>
+    <loc>https://exitliquidity.xyz/index/7d</loc>
+    <changefreq>hourly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://exitliquidity.xyz/index/30d</loc>
+    <changefreq>hourly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://exitliquidity.xyz/index/90d</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <url>
+    <loc>https://exitliquidity.xyz/lead-time</loc>
+    <changefreq>hourly</changefreq>
+    <priority>0.9</priority>
+  </url>
+</urlset>

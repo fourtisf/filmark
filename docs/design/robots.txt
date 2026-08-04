@@ -1,0 +1,23 @@
+# ExitLiquidity
+#
+# The public pages are the entire organic acquisition strategy (spec §4), so
+# everything that aggregates is open. Two things are not:
+#
+#   /app     the console is behind a paste box and has no stable content
+#   /trace/  a trace is one person's wallet history. It is public chain data,
+#            but a search result reading "here is what this address lost" is a
+#            different thing from a ranking page, and we do not want to be the
+#            reason someone's losses are the first hit for their address.
+
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /trace/
+Disallow: /*?wallet=
+
+# Crawl the token and extractor pages at a sane pace; there are a lot of them.
+Crawl-delay: 1
+
+Sitemap: https://exitliquidity.xyz/sitemap.xml
+Sitemap: https://exitliquidity.xyz/sitemap-tokens.xml
+Sitemap: https://exitliquidity.xyz/sitemap-extractors.xml

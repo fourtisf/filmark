@@ -24,6 +24,8 @@
 
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060607'/%3E%3Crect x='12' y='12' width='8' height='8' fill='%23E23B2E'/%3E%3C/svg%3E">
 
+<script type="application/ld+json" id="ld-list"></script>
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -31,7 +33,10 @@
 :root{
   --bk:#060607;--s1:#0B0C0E;--s2:#111316;
   --ln:#1B1E22;--ln2:#2A2F35;
-  --wh:#F5F6F7;--g1:#A3A9B0;--g2:#6B727A;--g3:#464C53;
+  --wh:#F5F6F7;--g1:#A3A9B0;--g2:#949BA4;--g3:#7E858E;--g4:#464C53;
+  /* g1-g3 all clear WCAG AA (4.5:1) on every surface in this palette;
+     the old #464C53 measured 2.33:1 and carried every label. It survives
+     as --g4 for hairlines and markers, which are not text. */
   --rd:#E23B2E;
   --sans:'Archivo',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,monospace;
@@ -69,7 +74,11 @@ h1,h2,h3{font-weight:400}
 .btn{padding:11px 22px;background:var(--wh);color:var(--bk);font-weight:600;
   font-size:12.5px;display:inline-block;transition:background .18s}
 .btn:hover{background:#fff}
-.btn-r{background:var(--rd);color:#fff}
+/* White on the accent measures 4.29:1 — just under AA. Darkening the red
+   would fix the button and break the loss figures, which need the accent to
+   stay >= 4.5:1 as *text* on the background. Near-black on red clears both at
+   4.72:1 and keeps §3's single accent intact. */
+.btn-r{background:var(--rd);color:var(--bk)}
 .btn-r:hover{background:#F04A3C}
 .btn-o{background:none;color:var(--wh);border:1px solid var(--ln2)}
 .btn-o:hover{border-color:var(--g3)}
@@ -138,6 +147,23 @@ h1 em{font-style:normal;font-weight:300;color:var(--g2)}
 .dist span{position:absolute;top:0;bottom:0;width:1px;background:var(--rd);opacity:.75}
 .dist span::after{content:"";position:absolute;left:-2px;top:0;width:5px;height:3px;
   background:var(--rd)}
+
+/* Same three states as the index. This page reads a heavier aggregate — every
+   entry against every detected move — so it is the more likely of the two to
+   be mid-rebuild when someone arrives. */
+.sk-row{display:grid;grid-template-columns:44px 232px 1fr 96px 92px 104px;
+  gap:22px;align-items:center;padding:18px 8px;border-bottom:1px solid var(--ln)}
+.sk-row i{display:block;height:11px;background:var(--ln);animation:pulse 1.4s ease-in-out infinite}
+.sk-row i:nth-child(2){height:15px}
+.sk-row i:nth-child(3){height:26px}
+.sk-row:nth-child(2) i{animation-delay:.1s}
+.sk-row:nth-child(3) i{animation-delay:.2s}
+.sk-row:nth-child(4) i{animation-delay:.3s}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.42}}
+.msg{padding:56px 8px;border-bottom:1px solid var(--ln);max-width:560px}
+.msg b{display:block;font-size:19px;font-weight:600;letter-spacing:-.025em}
+.msg p{margin-top:12px;color:var(--g1);font-weight:300;font-size:14.5px}
+.msg .btn-o{margin-top:22px}
 
 .more{margin-top:34px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .more small{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
@@ -287,6 +313,24 @@ footer a:hover{color:var(--wh)}
         <span>Pumps</span><span>Hit rate</span><span>Median lead</span>
       </div>
       <div id="rows"></div>
+
+      <div id="s-loading" hidden aria-hidden="true">
+        <div class="sk-row"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="sk-row"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="sk-row"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="sk-row"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+
+      <div class="msg" id="s-empty" hidden>
+        <b>No move cleared the definition this window.</b>
+        <p>Lead time is measured against the pump definition printed above. On a flat week nothing crosses it, so there is nothing to be early to and the board is empty.</p>
+      </div>
+
+      <div class="msg" id="s-error" hidden>
+        <b>The radar could not be built.</b>
+        <p>This board reads every entry against every detected move, and it is rebuilt hourly. A half-finished ranking would be worse than none, so you get this instead.</p>
+        <button class="btn btn-o" id="retry" type="button">Try again</button>
+      </div>
     </div>
 
     <div class="more">
@@ -356,6 +400,26 @@ const ROWS=[
 const MIN=-200,MAX=160;
 const pos=s=>((s-MIN)/(MAX-MIN)*100).toFixed(2);
 
+const PANELS={ready:document.getElementById("rows"),loading:document.getElementById("s-loading"),
+  empty:document.getElementById("s-empty"),error:document.getElementById("s-error")};
+function setState(kind){
+  for(const [k,el] of Object.entries(PANELS)) el.hidden=(k!==kind);
+}
+
+/* ?state=loading|empty|error pins a state so it can be reviewed at all. */
+const FORCE=new URLSearchParams(location.search).get("state");
+
+document.getElementById("ld-list").textContent=JSON.stringify({
+  "@context":"https://schema.org","@type":"ItemList",
+  name:"Solana wallets ranked by entry lead time",
+  numberOfItems:ROWS.length,
+  itemListOrder:"https://schema.org/ItemListOrderAscending",
+  itemListElement:ROWS.map(([addr,,pumps,hit,lead],i)=>({
+    "@type":"ListItem",position:i+1,name:addr,
+    url:"https://exitliquidity.xyz/extractor/"+addr,
+    description:lead+" median lead across "+pumps+" moves, "+hit+" before the move"}))
+});
+
 document.getElementById("rows").innerHTML=ROWS.map(
   ([addr,tag,pumps,hit,lead,entries],i)=>`
   <a class="row" href="exitliquidity-app.html">
@@ -369,6 +433,13 @@ document.getElementById("rows").innerHTML=ROWS.map(
     <span class="num">${hit}</span>
     <span class="lead">${lead}</span>
   </a>`).join("");
+
+function load(){
+  setState("loading");
+  setTimeout(()=>setState(FORCE==="error"?"error":FORCE==="empty"?"empty":ROWS.length?"ready":"empty"),260);
+}
+document.getElementById("retry").addEventListener("click",load);
+if(FORCE==="loading")setState("loading"); else load();
 </script>
 </body>
 </html>

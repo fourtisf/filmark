@@ -31,12 +31,23 @@ Static, in `docs/design/`. Open them straight from the filesystem — they have 
 build step and no backend. All four share one palette, one type system and one
 accent colour, taken from the landing page, which §3 makes the source of truth.
 
-| File                          | What it is                                                |
-| ----------------------------- | --------------------------------------------------------- |
-| `exitliquidity-landing.html`  | Marketing page. Design source of truth (§3)               |
-| `exitliquidity-index.html`    | Extractor index — biggest takers, 7/30/90d                |
-| `exitliquidity-leadtime.html` | Lead-time radar, with the pump definition §8 asks for     |
-| `exitliquidity-app.html`      | Console: trace, pre-trade, file, watchlist, receipt, card |
+| File                          | What it is                                                 |
+| ----------------------------- | ---------------------------------------------------------- |
+| `exitliquidity-landing.html`  | Marketing page. Design source of truth (§3)                |
+| `exitliquidity-index.html`    | Extractor index — biggest takers, 7/30/90d                 |
+| `exitliquidity-leadtime.html` | Lead-time radar, with the pump definition §8 asks for      |
+| `exitliquidity-app.html`      | Console: trace, pre-trade, file, watchlist, receipt, card  |
+| `404.html`                    | Not-found page                                             |
+| `robots.txt`, `sitemap.xml`   | Crawl rules and the fixed routes                           |
+| `og/*.png`                    | Link-preview cards, built by `scripts/build-og-images.mjs` |
+
+The two ranking pages take `?state=loading`, `?state=empty` and `?state=error`
+so those states can be reviewed at all — otherwise the only one anybody ever
+sees is the happy path.
+
+Every text colour in all four pages clears WCAG AA (4.5:1); the audit that
+proves it is described in `DECISIONS.md` under Design. The route table that P3
+renders against is [`docs/url-scheme.md`](docs/url-scheme.md).
 
 The index and lead-time pages are the two surfaces §1 calls the acquisition
 core — the only ones a first-time visitor can read without pasting anything —

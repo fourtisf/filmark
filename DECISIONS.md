@@ -3,7 +3,7 @@
 Where this repository departs from the handoff spec, and why. Everything not
 listed here follows §2–§6 as written.
 
-Three of these need a call from ALFA before P1; they are marked **open**.
+Four of these need a call from ALFA; they are listed at the end.
 
 ---
 
@@ -157,6 +157,55 @@ price at that instant than one several minutes stale. Beyond
 
 ---
 
+## Design
+
+### The palette's two dimmest greys were raised
+
+§3 fixes the grey ramp at `#A3A9B0 / #6B727A / #464C53`. Measured against the
+`#060607` background:
+
+| Step   | Was       | Ratio        | Now       | Ratio    |
+| ------ | --------- | ------------ | --------- | -------- |
+| `--g1` | `#A3A9B0` | 8.54 : 1     | unchanged | 8.54 : 1 |
+| `--g2` | `#6B727A` | **4.16 : 1** | `#949BA4` | 7.22 : 1 |
+| `--g3` | `#464C53` | **2.33 : 1** | `#7E858E` | 5.43 : 1 |
+| `--g4` | —         | —            | `#464C53` | 2.33 : 1 |
+
+WCAG AA wants 4.5:1 for text this size. The old `#464C53` sat at barely half
+that and carried every eyebrow, caption, table head and unit label — the parts
+that tell a reader what a number means. Across the four prototypes that was 58
+failing text nodes.
+
+The original darkest value survives as `--g4`, restricted to hairlines and
+markers, which are not text and have no contrast requirement. All four pages
+now measure zero failures.
+
+**This changes the design source of truth, so it is ALFA's to accept or
+reject.** It is one line in `:root` per file to revert.
+
+### Accent buttons carry near-black text, not white
+
+White on `--rd` measures 4.29:1 — under AA. The obvious fix, darkening the red,
+breaks the other direction: the accent also has to work as _text_ on the
+background for loss figures, where `#E23B2E` currently gives 4.72:1 and any
+darker value fails.
+
+One accent cannot do both with white. Near-black on red clears at 4.72:1 and
+keeps §3's single-accent rule intact.
+
+### The window belongs in the path, not a query string
+
+The extractor index has three windows. As `?w=30` they are one URL to a
+crawler, which splits the ranking signal for a page that §4 makes the whole
+acquisition strategy. Production serves `/index/7d`, `/index/30d`,
+`/index/90d`; the prototype pushes a real history entry and moves its canonical
+tag to match, so the intent is visible rather than described.
+
+The full route table, including why `/trace/` is `noindex` and what floor a
+generated page has to clear, is in [`docs/url-scheme.md`](docs/url-scheme.md).
+
+---
+
 ## Open — need a call before P1
 
 1. **Pump.fun fee decoding.** Blocks the P1 reconciliation gate, as above. Needs
@@ -167,6 +216,9 @@ price at that instant than one several minutes stale. Beyond
    material share of a token's history lands unpriced, P1 has to decide whether
    to exclude those positions from attribution the way §2 Stage 2 excludes
    `unknown_basis` positions, or to widen the staleness bound.
+
+4. **The raised palette.** See Design above. Zero contrast failures now, but it
+   amends §3, which is ALFA's document.
 
 Also unresolved from §9, and untouched here: pricing, and whether public pages
 carry Fourtis.io cross-links. Neither affects P0.

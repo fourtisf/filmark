@@ -12,6 +12,7 @@
     "packages/*/src/**/*.ts",
     "apps/*/src/**/*.ts",
     "vitest.config.ts",
-    "eslint.config.js"
+    "eslint.config.js",
+    "scripts/**/*.mjs"
   ]
 }

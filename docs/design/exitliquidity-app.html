@@ -35,7 +35,9 @@
 :root{
   --void:#060607;--sur:#0B0C0E;--sur2:#111316;
   --line:#1B1E22;--line2:#2A2F35;
-  --text:#F5F6F7;--text2:#A3A9B0;--text3:#6B727A;--text4:#464C53;
+  --text:#F5F6F7;--text2:#A3A9B0;--text3:#7E858E;--text4:#464C53;
+  /* --text3 lifted from #6B727A (4.09:1, below AA) to 5.43:1.
+     --text4 is for markers and hairlines only, never type. */
   --ext:#E23B2E;--ext2:#E23B2E;--gold:#F5F6F7;--ok:#F5F6F7;
   --sans:'Archivo',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,monospace;
@@ -77,7 +79,7 @@ h1,h2,h3{font-weight:400}
 .quota a{border-bottom:1px solid currentColor}
 .lock{display:grid;grid-template-columns:38px 1fr auto;gap:20px;align-items:center;
   padding:21px 8px;border-bottom:1px solid var(--line)}
-.lock .rk{color:var(--text4)}
+.lock .rk{color:var(--text3)}
 .lock-w{font-family:var(--mono);font-size:14px;color:var(--text4);
   filter:blur(4px);user-select:none}
 .lock-a{font-family:var(--mono);font-size:19px;font-weight:300;color:var(--text3);
@@ -816,13 +818,24 @@ $("#cp").addEventListener("click",async()=>{
 });
 
 /* ── router + wiring ──────────────────── */
-function show(v){
+const VIEWS=["trace","pre","file","watch","token","card"];
+
+/* Each surface gets a hash, so a link can point at one and the back button
+   works. Public pages link straight to #token; without this they landed on
+   whichever view happened to be open. */
+function show(v,writeHash=true){
+  if(!VIEWS.includes(v))v="trace";
   $$(".nv").forEach(b=>b.setAttribute("aria-current",b.dataset.v===v));
-  ["trace","pre","file","watch","token","card"].forEach(k=>$("#v-"+k).hidden=(k!==v));
+  VIEWS.forEach(k=>$("#v-"+k).hidden=(k!==v));
+  if(writeHash&&location.hash.slice(1)!==v){
+    history.pushState(null,"","#"+v);
+  }
   window.scrollTo({top:0,behavior:"instant"});
 }
 $$(".nv").forEach(b=>b.addEventListener("click",()=>show(b.dataset.v)));
 $$("[data-jump]").forEach(b=>b.addEventListener("click",()=>show(b.dataset.jump)));
+addEventListener("hashchange",()=>show(location.hash.slice(1),false));
+addEventListener("popstate",()=>show(location.hash.slice(1),false));
 $$(".chip[data-w]").forEach(c=>c.addEventListener("click",()=>{
   $("#addr").value=DATA[c.dataset.w].addr;trace(c.dataset.w)}));
 $("#go").addEventListener("click",()=>trace());
@@ -838,11 +851,15 @@ $("#extgo").addEventListener("click",()=>{
   i>=0?openFile(i):openFile(0)});
 renderTokLed();
 
-/* The landing hero posts here with ?wallet=. Running it on arrival means the
-   paste box on the front page is one action, not two. */
+/* Arrive on the surface the link asked for, then run any wallet it carried.
+   The landing hero posts here with ?wallet=, so the paste box on the front
+   page is one action rather than two. */
+if(location.hash)show(location.hash.slice(1),false);
+
 const incoming=new URLSearchParams(location.search).get("wallet");
 if(incoming){
   $("#addr").value=incoming;
+  if(!location.hash)show("trace",false);
   trace(Object.keys(DATA).find(k=>DATA[k].addr===incoming)||undefined);
 }
 </script>

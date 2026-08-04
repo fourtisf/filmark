@@ -34,7 +34,10 @@
 :root{
   --bk:#060607;--s1:#0B0C0E;--s2:#111316;
   --ln:#1B1E22;--ln2:#2A2F35;
-  --wh:#F5F6F7;--g1:#A3A9B0;--g2:#6B727A;--g3:#464C53;
+  --wh:#F5F6F7;--g1:#A3A9B0;--g2:#949BA4;--g3:#7E858E;--g4:#464C53;
+  /* g1-g3 all clear WCAG AA (4.5:1) on every surface in this palette;
+     the old #464C53 measured 2.33:1 and carried every label. It survives
+     as --g4 for hairlines and markers, which are not text. */
   --rd:#E23B2E;
   --sans:'Archivo',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,monospace;
@@ -83,7 +86,11 @@ h1,h2,h3{font-weight:400}
 .btn:hover{background:#fff}
 .btn-o{background:none;color:var(--wh);border:1px solid var(--ln2)}
 .btn-o:hover{background:none;border-color:var(--g3)}
-.btn-r{background:var(--rd);color:#fff}
+/* White on the accent measures 4.29:1 — just under AA. Darkening the red
+   would fix the button and break the loss figures, which need the accent to
+   stay >= 4.5:1 as *text* on the background. Near-black on red clears both at
+   4.72:1 and keeps §3's single accent intact. */
+.btn-r{background:var(--rd);color:var(--bk)}
 .btn-r:hover{background:#F04A3C}
 
 .mega{position:absolute;left:0;right:0;top:100%;background:var(--bk);
@@ -123,7 +130,7 @@ h1 u{text-decoration:none;color:var(--rd)}
 .field input::placeholder{color:var(--g3)}
 .field input:focus{outline:none}
 .field input[aria-invalid="true"]{color:var(--rd)}
-.field .go{padding:17px 26px;background:var(--rd);color:#fff;font-weight:600;
+.field .go{padding:17px 26px;background:var(--rd);color:var(--bk);font-weight:600;
   font-size:12.5px;white-space:nowrap;transition:background .18s}
 .field .go:hover{background:#F04A3C}
 .tries{margin-top:14px;display:flex;flex-wrap:wrap;gap:9px;align-items:center}
@@ -314,7 +321,7 @@ footer a:hover{color:var(--wh)}
       </div>
       <div class="mcol">
         <h4>Public pages</h4>
-        <a href="exitliquidity-app.html"><b>Token receipt</b><span>Who funded whom, per token</span></a>
+        <a href="exitliquidity-app.html#token"><b>Token receipt</b><span>Who funded whom, per token</span></a>
         <a href="exitliquidity-index.html"><b>Extractor index</b><span>Solana's biggest takers, ranked</span></a>
         <a href="exitliquidity-leadtime.html"><b>Lead-time radar</b><span>Wallets ranked by how early they are</span></a>
       </div>
@@ -418,7 +425,7 @@ footer a:hover{color:var(--wh)}
         <p>Ranked by how early wallets buy relative to the move — not by how much they made.</p>
         <span class="open-go">Read the radar →</span>
       </a>
-      <a href="exitliquidity-app.html">
+      <a href="exitliquidity-app.html#token">
         <div class="open-l">$BONKX · net transfer</div>
         <div class="open-v neg">$2.14M</div>
         <div class="open-l">3,412 funded · 14 took</div>
@@ -481,7 +488,7 @@ footer a:hover{color:var(--wh)}
     <div class="grp">
       <div class="grp-h"><b>Look backward</b><span>What already happened, and who it happened to you for.</span></div>
       <div class="cards">
-        <a class="card" id="f-trace" href="exitliquidity-app.html">
+        <a class="card" id="f-trace" href="exitliquidity-app.html#trace">
           <svg viewBox="0 0 200 70" aria-hidden="true"><g fill="var(--rd)">
             <path opacity=".5" d="M32,10 C100,10 108,6 168,6 L168,18 C108,18 100,24 32,24 Z"/>
             <path opacity=".32" d="M32,24 C100,24 108,34 168,34 L168,46 C108,46 100,36 32,36 Z"/>
@@ -571,7 +578,7 @@ footer a:hover{color:var(--wh)}
     <div class="grp">
       <div class="grp-h"><b>Public pages</b><span>Open, linkable, no account. This is how people find the product.</span></div>
       <div class="cards">
-        <a class="card" id="f-token" href="exitliquidity-app.html">
+        <a class="card" id="f-token" href="exitliquidity-app.html#token">
           <svg viewBox="0 0 200 70" aria-hidden="true">
             <text x="14" y="16" font-family="var(--mono)" font-size="9" fill="var(--g1)">$BONKX</text>
             <rect x="14" y="24" width="128" height="22" fill="var(--rd)" opacity=".55"/>

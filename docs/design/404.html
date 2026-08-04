@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Not found — ExitLiquidity</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#060607">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060607'/%3E%3Crect x='12' y='12' width='8' height='8' fill='%23E23B2E'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bk:#060607;--s1:#0B0C0E;--ln:#1B1E22;--ln2:#2A2F35;
+  --wh:#F5F6F7;--g1:#A3A9B0;--g2:#949BA4;--g3:#7E858E;--g4:#464C53;
+  --rd:#E23B2E;
+  --sans:'Archivo',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bk);color:var(--wh);font-family:var(--sans);font-size:15px;
+  line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh;
+  display:flex;flex-direction:column}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:1px solid var(--rd);outline-offset:4px}
+h1{font-weight:400}
+.rule{position:fixed;inset:0;z-index:0;pointer-events:none;display:flex;justify-content:center}
+.rule>div{width:100%;max-width:1180px;padding:0 44px;height:100%;
+  display:grid;grid-template-columns:repeat(6,1fr)}
+.rule i{border-left:1px solid rgba(245,246,247,.026);height:100%}
+.rule i:last-child{border-right:1px solid rgba(245,246,247,.026)}
+.w{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 44px;width:100%}
+
+.nav{border-bottom:1px solid var(--ln)}
+.nav-in{max-width:1180px;margin:0 auto;padding:0 44px;height:64px;display:flex;align-items:center}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:13.5px;
+  letter-spacing:-.02em;font-variation-settings:'wdth' 108}
+.logo i{font-style:normal;font-weight:300;color:var(--g3)}
+.sq{width:7px;height:7px;background:var(--rd)}
+
+main{flex:1;display:flex;align-items:center;padding:80px 0}
+.kick{font-family:var(--mono);font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;
+  color:var(--g3);margin-bottom:26px;display:flex;align-items:center;gap:12px}
+.kick::before{content:"";width:26px;height:1px;background:var(--rd)}
+h1{font-size:clamp(38px,6vw,68px);line-height:1;letter-spacing:-.045em;
+  font-weight:700;font-variation-settings:'wdth' 104}
+h1 em{font-style:normal;font-weight:300;color:var(--g2)}
+p.lede{margin-top:26px;max-width:520px;color:var(--g1);font-weight:300;font-size:16px}
+
+.opts{margin-top:44px;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
+  background:var(--ln);border:1px solid var(--ln);max-width:860px}
+.opts a{background:var(--bk);padding:22px 20px 24px;display:block;transition:background .22s}
+.opts a:hover{background:var(--s1)}
+.opts b{display:block;font-size:15px;font-weight:600;letter-spacing:-.02em}
+.opts span{display:block;margin-top:7px;color:var(--g2);font-weight:300;font-size:12.5px;
+  line-height:1.5}
+.opts a:hover b{color:var(--rd)}
+
+footer{padding:24px 0 40px;border-top:1px solid var(--ln);font-family:var(--mono);
+  font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--g3);
+  display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+footer a:hover{color:var(--wh)}
+@media (max-width:820px){
+  .w,.nav-in,.rule>div{padding-left:24px;padding-right:24px}
+  .rule>div{grid-template-columns:repeat(2,1fr)}
+  .opts{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="rule" aria-hidden="true"><div><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+
+<nav class="nav"><div class="nav-in">
+  <a class="logo" href="exitliquidity-landing.html"><span class="sq"></span>EXIT<i>LIQUIDITY</i></a>
+</div></nav>
+
+<main><div class="w">
+  <div class="kick">404 · not found</div>
+  <h1>No page here.<br><em>The chain still has one.</em></h1>
+  <p class="lede">Either the address doesn't exist, or it does and nothing has closed against it yet. A wallet with no realised losses has nothing to attribute, so there is no page to build.</p>
+
+  <div class="opts">
+    <a href="exitliquidity-index.html">
+      <b>Extractor index</b>
+      <span>The biggest takers on Solana, over 7, 30 and 90 days.</span>
+    </a>
+    <a href="exitliquidity-leadtime.html">
+      <b>Lead-time radar</b>
+      <span>Wallets ranked by how early they enter, not by how much they made.</span>
+    </a>
+    <a href="exitliquidity-app.html">
+      <b>Trace a wallet</b>
+      <span>Paste an address and see who was on the other side.</span>
+    </a>
+  </div>
+</div></main>
+
+<div class="w"><footer>
+  <span>ExitLiquidity — prototype</span>
+  <a href="exitliquidity-landing.html">Home</a>
+</footer></div>
+
+</body>
+</html>

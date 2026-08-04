@@ -24,6 +24,26 @@
 
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060607'/%3E%3Crect x='12' y='12' width='8' height='8' fill='%23E23B2E'/%3E%3C/svg%3E">
 
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Dataset",
+  "name": "ExitLiquidity extractor index",
+  "description": "Solana wallets ranked by dollars attributed to them out of other people's realised losses, over rolling 7, 30 and 90 day windows.",
+  "url": "https://exitliquidity.xyz/index/30d",
+  "creator": { "@type": "Organization", "name": "ExitLiquidity", "url": "https://exitliquidity.xyz/" },
+  "temporalCoverage": "P30D",
+  "isAccessibleForFree": true,
+  "license": "https://exitliquidity.xyz/terms",
+  "variableMeasured": [
+    { "@type": "PropertyValue", "name": "attributed", "description": "USD of other wallets' realised losses that overlapped with this wallet's selling, in the same pool and window", "unitText": "USD" },
+    { "@type": "PropertyValue", "name": "walletsHit", "description": "Distinct wallets with at least one attributed row against this address" },
+    { "@type": "PropertyValue", "name": "medianLead", "description": "Median seconds between this wallet's entry and the start of the move", "unitText": "SEC" }
+  ]
+}
+</script>
+<script type="application/ld+json" id="ld-list"></script>
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -31,7 +51,10 @@
 :root{
   --bk:#060607;--s1:#0B0C0E;--s2:#111316;
   --ln:#1B1E22;--ln2:#2A2F35;
-  --wh:#F5F6F7;--g1:#A3A9B0;--g2:#6B727A;--g3:#464C53;
+  --wh:#F5F6F7;--g1:#A3A9B0;--g2:#949BA4;--g3:#7E858E;--g4:#464C53;
+  /* g1-g3 all clear WCAG AA (4.5:1) on every surface in this palette;
+     the old #464C53 measured 2.33:1 and carried every label. It survives
+     as --g4 for hairlines and markers, which are not text. */
   --rd:#E23B2E;
   --sans:'Archivo',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,monospace;
@@ -70,7 +93,11 @@ h1,h2,h3{font-weight:400}
 .btn{padding:11px 22px;background:var(--wh);color:var(--bk);font-weight:600;
   font-size:12.5px;display:inline-block;transition:background .18s}
 .btn:hover{background:#fff}
-.btn-r{background:var(--rd);color:#fff}
+/* White on the accent measures 4.29:1 — just under AA. Darkening the red
+   would fix the button and break the loss figures, which need the accent to
+   stay >= 4.5:1 as *text* on the background. Near-black on red clears both at
+   4.72:1 and keeps §3's single accent intact. */
+.btn-r{background:var(--rd);color:var(--bk)}
 .btn-r:hover{background:#F04A3C}
 .btn-o{background:none;color:var(--wh);border:1px solid var(--ln2)}
 .btn-o:hover{border-color:var(--g3)}
@@ -129,6 +156,25 @@ h1 u{text-decoration:none;color:var(--rd)}
    would otherwise be stranded across. One accent, no gradient. */
 .bar{height:4px;background:var(--ln)}
 .bar i{display:block;height:100%;background:var(--rd)}
+
+/* Loading, empty and failed. The real index reads a materialised view over a
+   billion-row table; it will not always be instant and it will not always
+   succeed, and a design that only draws the happy path leaves those to
+   whoever implements it. */
+.sk-row{display:grid;grid-template-columns:44px 232px 1fr 132px 108px 92px 96px;
+  gap:22px;align-items:center;padding:18px 8px;border-bottom:1px solid var(--ln)}
+.sk-row i{display:block;height:11px;background:var(--ln);animation:pulse 1.4s ease-in-out infinite}
+.sk-row i:nth-child(2){height:15px}
+.sk-row i:nth-child(3){height:4px}
+.sk-row:nth-child(2) i{animation-delay:.1s}
+.sk-row:nth-child(3) i{animation-delay:.2s}
+.sk-row:nth-child(4) i{animation-delay:.3s}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.42}}
+.msg{padding:56px 8px;border-bottom:1px solid var(--ln);max-width:560px}
+.msg b{display:block;font-size:19px;font-weight:600;letter-spacing:-.025em}
+.msg p{margin-top:12px;color:var(--g1);font-weight:300;font-size:14.5px}
+.msg .btn-o{margin-top:22px}
+.msg code{font-family:var(--mono);font-size:12px;color:var(--g3)}
 
 .more{margin-top:34px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .more small{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
@@ -232,6 +278,24 @@ footer a:hover{color:var(--wh)}
         <span>Wallets hit</span><span>Pools</span><span>Median lead</span>
       </div>
       <div id="rows"></div>
+
+      <div id="s-loading" hidden aria-hidden="true">
+        <div class="sk-row"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="sk-row"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="sk-row"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="sk-row"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+
+      <div class="msg" id="s-empty" hidden>
+        <b>Nothing cleared the floor in this window.</b>
+        <p>A wallet only appears once it has been on the other side of a realised loss. Over a short window on a quiet week, that can be nobody — which is a real answer, not a failure.</p>
+      </div>
+
+      <div class="msg" id="s-error" hidden>
+        <b>The ranking could not be built.</b>
+        <p>The aggregate behind this page is rebuilt hourly. If it is mid-rebuild or the query timed out, this is what you get instead of a half-finished list.</p>
+        <button class="btn btn-o" id="retry" type="button">Try again</button>
+      </div>
     </div>
 
     <div class="more">
@@ -330,6 +394,25 @@ const DATA={
 
 const usd=n=>n>=1e6?"$"+(n/1e6).toFixed(2)+"M":"$"+Math.round(n/1e3)+"K";
 const rows=document.getElementById("rows");
+const PANELS={ready:rows,loading:document.getElementById("s-loading"),
+  empty:document.getElementById("s-empty"),error:document.getElementById("s-error")};
+
+function setState(kind){
+  for(const [k,el] of Object.entries(PANELS)) el.hidden=(k!==kind);
+  document.getElementById("more-n").hidden=(kind!=="ready");
+}
+
+/* Each window is its own URL in production (/index/7d). The prototype pushes a
+   query string and moves the canonical with it, so the intent is visible and
+   the back button works. See docs/url-scheme.md. */
+function syncUrl(win,push){
+  const q=win==="30"?"":"?w="+win+"d";
+  if(push&&location.search!==q)history.pushState({win},"",location.pathname+q);
+  document.querySelector('link[rel="canonical"]').href=
+    "https://exitliquidity.xyz/index/"+win+"d";
+  document.querySelector('meta[property="og:url"]').content=
+    "https://exitliquidity.xyz/index/"+win+"d";
+}
 
 function render(win){
   const d=DATA[win],peak=d.rows[0][2];
@@ -341,6 +424,17 @@ function render(win){
   document.getElementById("win-note").textContent=d.note;
   document.getElementById("more-n").textContent="Showing "+d.rows.length+" of 100 · demo data";
 
+  document.getElementById("ld-list").textContent=JSON.stringify({
+    "@context":"https://schema.org","@type":"ItemList",
+    name:"Biggest extractors on Solana, "+win+" days",
+    numberOfItems:d.rows.length,
+    itemListOrder:"https://schema.org/ItemListOrderDescending",
+    itemListElement:d.rows.map(([addr,,amt],i)=>({
+      "@type":"ListItem",position:i+1,name:addr,
+      url:"https://exitliquidity.xyz/extractor/"+addr,
+      description:usd(amt)+" attributed over "+win+" days"}))
+  });
+
   rows.innerHTML=d.rows.map(([addr,tag,amt,hit,pools,lead],i)=>`
     <a class="row" href="exitliquidity-app.html">
       <span class="rk">${String(i+1).padStart(2,"0")}</span>
@@ -351,16 +445,40 @@ function render(win){
       <span class="num dim">${pools}</span>
       <span class="num">${lead}</span>
     </a>`).join("");
+
+  setState(d.rows.length?"ready":"empty");
 }
 
-document.querySelectorAll(".win button").forEach(b=>{
-  b.addEventListener("click",()=>{
-    document.querySelectorAll(".win button").forEach(o=>o.setAttribute("aria-pressed",o===b));
-    render(b.dataset.win);
-  });
-});
+/* The aggregate is a query, not a constant. Showing the skeleton for a beat
+   means the loading state is exercised every time rather than only in review. */
+function load(win,push=true){
+  syncUrl(win,push);
+  setState("loading");
+  setTimeout(()=>{
+    if(FORCE==="error"){setState("error");return}
+    if(FORCE==="empty"){setState("empty");return}
+    render(win);
+  },260);
+}
 
-render("30");
+/* ?state=loading|empty|error pins a state so it can be reviewed at all. */
+const FORCE=new URLSearchParams(location.search).get("state");
+
+function selectWindow(win,push=true){
+  document.querySelectorAll(".win button").forEach(o=>
+    o.setAttribute("aria-pressed",o.dataset.win===win));
+  load(win,push);
+}
+
+document.querySelectorAll(".win button").forEach(b=>
+  b.addEventListener("click",()=>selectWindow(b.dataset.win)));
+document.getElementById("retry").addEventListener("click",()=>
+  load(document.querySelector('.win button[aria-pressed="true"]').dataset.win,false));
+addEventListener("popstate",()=>
+  selectWindow((new URLSearchParams(location.search).get("w")||"30d").replace("d",""),false));
+
+if(FORCE==="loading")setState("loading");
+else selectWindow((new URLSearchParams(location.search).get("w")||"30d").replace("d",""),false);
 </script>
 </body>
 </html>
