@@ -135,6 +135,13 @@ h1 em{font-style:normal;font-weight:300;color:var(--text3)}
   letter-spacing:.16em;text-transform:uppercase;color:var(--text3)}
 .state i{font-style:normal;color:var(--ext2)}
 
+/* Stated once, at the top of every tab. The footer line was too easy to miss,
+   and a figure that looks like an answer is worse than no figure at all. */
+.proto{margin-top:26px;border:1px solid var(--line2);border-left:2px solid var(--ext2);
+  padding:13px 18px;font-size:13px;font-weight:300;color:var(--text2);max-width:780px}
+.proto b{color:var(--text);font-weight:600}
+.nd-a{font-family:var(--mono);font-size:12.5px;color:var(--text);word-break:break-all}
+
 .empty{margin-top:46px;border:1px dashed var(--line2);padding:44px 34px;max-width:640px}
 .empty p{color:var(--text2);font-weight:300;max-width:420px}
 .empty .go{margin-top:22px;display:inline-block;padding:12px 22px}
@@ -332,6 +339,12 @@ footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
 
 <div class="w">
 
+<div class="proto" role="note">
+  <b>Prototype — nothing here is real.</b> Every figure on every tab is fabricated
+  for layout. No Solana data is being ingested yet, so no address you paste can
+  return a genuine result, and this page will say so rather than show you one.
+</div>
+
 <!-- ── TRACE ────────────────────────────── -->
 <section id="v-trace">
   <div class="head">
@@ -348,6 +361,7 @@ footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
     <button class="chip" data-w="w1">7xKq…9fD3</button>
     <button class="chip" data-w="w2">4Bnv…Ha7Z</button></div>
   <div class="state" id="state" role="status" aria-live="polite"></div>
+  <div id="nodata" hidden></div>
 
   <div id="out" class="fade" hidden>
     <div class="sum">
@@ -670,11 +684,41 @@ function count(el,to){
 
 /* ── trace ────────────────────────────── */
 let busy=false;
+
+const BASE58=/^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const lookup=v=>Object.keys(DATA).find(k=>DATA[k].addr===v);
+
+/* An address nobody has data for used to fall through to the first demo wallet,
+   which meant a real address came back with someone else's numbers under a
+   "trace complete" banner. Spec §7.4: no fabricated figures, and certainly not
+   ones presented as an answer to a specific question. Say nothing instead. */
+function noIndex(v){
+  $("#out").hidden=true;$("#out").classList.remove("in");
+  $("#state").innerHTML="No trace · <i>this address is not in the prototype</i>";
+  const box=$("#nodata");
+  box.innerHTML=`<div class="empty">
+    <div class="sec-k">Not indexed</div>
+    <h2 style="margin-top:12px;font-size:26px">There is nothing behind this yet.</h2>
+    <p><code class="nd-a" id="nd-a"></code></p>
+    <p style="margin-top:16px">That wallet may well have closed positions on Solana.
+    This build cannot see them — no ingest is running, so there is no index to ask.</p>
+    <p style="margin-top:14px">It could have shown you numbers. They would have belonged
+    to a different wallet. The two addresses under the box are the only ones carrying
+    figures here, and those figures are drawn for layout, not measured.</p></div>`;
+  box.querySelector("#nd-a").textContent=v;
+  box.hidden=false;
+}
+
 function trace(key){
   if(busy)return;
   if(!key){const v=$("#addr").value.trim();
     if(!v){$("#state").textContent="Paste a wallet address first";$("#addr").focus();return}
-    key=Object.keys(DATA).find(k=>DATA[k].addr===v)||"w1"}
+    if(!BASE58.test(v)){
+      $("#state").textContent="That is not a Solana address";
+      $("#nodata").hidden=true;$("#out").hidden=true;return}
+    key=lookup(v);
+    if(!key){noIndex(v);return}}
+  $("#nodata").hidden=true;
   busy=true;$("#go").disabled=true;$("#out").classList.remove("in");
   $("#state").innerHTML="Netting pool windows… <i>reading closed positions</i>";
   setTimeout(()=>{
@@ -848,7 +892,12 @@ $$(".chip[data-f]").forEach(c=>c.addEventListener("click",()=>{
   $("#ext").value=FILES[c.dataset.f].a;openFile(+c.dataset.f)}));
 $("#extgo").addEventListener("click",()=>{
   const v=$("#ext").value.trim();const i=FILES.findIndex(f=>f.a===v);
-  i>=0?openFile(i):openFile(0)});
+  // Same rule as trace: an unknown address gets an answer about itself or none.
+  if(i>=0){openFile(i);return}
+  $("#extout").hidden=true;
+  $("#extstate").textContent=v
+    ? "No file · this address is not in the prototype"
+    : "Paste an address, or pick one of the three above";});
 renderTokLed();
 
 /* Arrive on the surface the link asked for, then run any wallet it carried.
@@ -860,7 +909,7 @@ const incoming=new URLSearchParams(location.search).get("wallet");
 if(incoming){
   $("#addr").value=incoming;
   if(!location.hash)show("trace",false);
-  trace(Object.keys(DATA).find(k=>DATA[k].addr===incoming)||undefined);
+  trace();   // resolves the address or says it cannot; never substitutes another
 }
 </script>
 </body>
