@@ -8,7 +8,15 @@ import {
 } from './amounts.js';
 import { RateLimiter, backoffDelay, chunk, mapWithConcurrency, retry, sleep } from './async.js';
 import { loadConfig } from './config.js';
-import { AbortedError, ConfigError, StorageError, describeError, isRetryable } from './errors.js';
+import {
+  AbortedError,
+  ConfigError,
+  StorageError,
+  UpstreamError,
+  describeError,
+  isRetryable,
+  retryAfterMs,
+} from './errors.js';
 import { createIngestMetrics, MetricsRegistry } from './metrics.js';
 import {
   floorToMinute,
@@ -154,6 +162,45 @@ describe('retry', () => {
     await expect(
       retry(async () => 'never', { maxAttempts: 0, minMs: 1, maxMs: 2 }),
     ).rejects.toThrow(RangeError);
+  });
+
+  it('waits as long as the server asked, not as long as the guess suggested', async () => {
+    // A 429 carrying Retry-After: 10 met a 2.3s backoff, so every retry was
+    // rejected again on arrival and the attempt budget burned without ever
+    // waiting long enough to succeed.
+    const delays: number[] = [];
+    const throttled = new UpstreamError('HTTP 429', { context: { retryAfter: '10' } });
+
+    await expect(
+      retry(
+        async () => {
+          throw throttled;
+        },
+        {
+          maxAttempts: 2,
+          minMs: 1,
+          maxMs: 2,
+          maxRetryAfterMs: 0, // do not actually sleep ten seconds in a unit test
+          onRetry: (_error, _attempt, delayMs) => delays.push(delayMs),
+        },
+      ),
+    ).rejects.toThrow('HTTP 429');
+
+    // With the cap lifted the hint would win outright; this proves it is read.
+    expect(retryAfterMs(throttled)).toBe(10_000);
+    expect(delays).toHaveLength(1);
+  });
+
+  it('reads both Retry-After wire formats and ignores anything else', () => {
+    expect(retryAfterMs(new UpstreamError('x', { context: { retryAfter: '30' } }))).toBe(30_000);
+    expect(retryAfterMs(new UpstreamError('x', { context: { retryAfter: 5 } }))).toBe(5000);
+    expect(retryAfterMs(new UpstreamError('x', { context: { retryAfter: null } }))).toBeUndefined();
+    expect(retryAfterMs(new UpstreamError('x'))).toBeUndefined();
+    expect(retryAfterMs(new Error('not an AppError'))).toBeUndefined();
+
+    const future = new Date(Date.now() + 20_000).toUTCString();
+    const fromDate = retryAfterMs(new UpstreamError('x', { context: { retryAfter: future } }));
+    expect(fromDate).toBeGreaterThan(15_000);
   });
 });
 

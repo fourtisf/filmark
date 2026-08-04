@@ -1,4 +1,4 @@
-import { AbortedError, isRetryable } from './errors.js';
+import { AbortedError, isRetryable, retryAfterMs } from './errors.js';
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) return Promise.reject(new AbortedError('Aborted before sleep'));
@@ -42,6 +42,11 @@ export interface RetryOptions extends BackoffOptions {
   /** Defaults to "retry only errors marked retryable". */
   readonly shouldRetry?: (error: unknown, attempt: number) => boolean;
   readonly onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
+  /**
+   * Ceiling on a server-supplied `Retry-After`, so a provider cannot park the
+   * process for an hour. Defaults to 60s.
+   */
+  readonly maxRetryAfterMs?: number;
 }
 
 /**
@@ -67,7 +72,10 @@ export async function retry<T>(
       if (error instanceof AbortedError) throw error;
       const isLast = attempt === maxAttempts - 1;
       if (isLast || !shouldRetry(error, attempt)) throw error;
-      const delay = backoffDelay(attempt, options);
+      // A stated Retry-After wins over the guess whenever it is longer. Backing
+      // off below it is a rejection the caller has already been warned about.
+      const hint = Math.min(retryAfterMs(error) ?? 0, options.maxRetryAfterMs ?? 60_000);
+      const delay = Math.max(backoffDelay(attempt, options), hint);
       onRetry?.(error, attempt, delay);
       await sleep(delay, signal);
     }

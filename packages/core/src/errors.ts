@@ -77,6 +77,25 @@ export function isRetryable(error: unknown): boolean {
 }
 
 /**
+ * Reads a server's `Retry-After` out of an error's context, in milliseconds.
+ *
+ * Backing off for two seconds when the endpoint has said ten guarantees another
+ * rejection and spends an attempt finding that out. The server knows its own
+ * limit; exponential backoff is only a guess at it.
+ *
+ * Both wire forms are accepted: delta-seconds and an HTTP date.
+ */
+export function retryAfterMs(error: unknown): number | undefined {
+  if (!(error instanceof AppError)) return undefined;
+  const raw = error.context['retryAfter'];
+  if (typeof raw === 'number') return Number.isFinite(raw) ? Math.max(0, raw * 1000) : undefined;
+  if (typeof raw !== 'string' || raw === '') return undefined;
+  if (/^\d+$/.test(raw)) return Number(raw) * 1000;
+  const at = Date.parse(raw);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
+}
+
+/**
  * Turns anything thrown into something loggable without losing the stack.
  *
  * The cause chain is walked, because the wrapping this codebase does is exactly

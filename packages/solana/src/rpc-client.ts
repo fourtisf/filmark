@@ -229,10 +229,13 @@ export class SolanaRpcClient {
         maxMs: 8000,
         ...(signal === undefined ? {} : { signal }),
         onRetry: (error, attempt, delayMs) => {
-          this.#logger.warn(
-            { method, attempt, delayMs, err: describeError(error) },
-            'retrying RPC call',
-          );
+          // A retry is expected behaviour, not a failure, and the stack is
+          // identical every time — the same four frames from this method. Under
+          // a rate limit that stack is printed hundreds of times and buries the
+          // one line that matters. Message and context carry the diagnosis:
+          // status, Retry-After, and the provider's own words.
+          const { stack: _stack, ...compact } = describeError(error);
+          this.#logger.warn({ method, attempt, delayMs, err: compact }, 'retrying RPC call');
         },
       },
     );
