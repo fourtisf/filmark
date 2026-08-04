@@ -11,6 +11,7 @@ import {
   verify,
   worker,
 } from './commands.js';
+import { loadEnvFile } from './env.js';
 import { createServices } from './services.js';
 
 const USAGE = `
@@ -62,6 +63,12 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${USAGE}\n`);
     return command === undefined ? 1 : 0;
   }
+
+  // Nothing else reads .env. Say which file was used, on stderr so it never
+  // contaminates a command's output: a config error whose cause is an unread
+  // file is indistinguishable from one whose cause is an unset variable.
+  const envFile = loadEnvFile();
+  if (envFile !== null) process.stderr.write(`env: ${envFile}\n`);
 
   const services = createServices();
 

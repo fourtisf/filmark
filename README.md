@@ -92,6 +92,13 @@ ERR_MODULE_NOT_FOUND … @exitliquidity/core/dist/index.js
 
 it means the build was skipped — run `pnpm build` and try again.
 
+The CLI loads that `.env` itself, searching upward from the working directory,
+because `pnpm --filter` runs it from `apps/ingest` while the file lives at the
+repository root. The path it used is printed to stderr on every run, so a
+missing variable can always be told apart from an unread file. Anything already
+exported wins over the file, and `ENV_FILE=/path/to/file` overrides the search
+entirely — which is what a systemd unit wants.
+
 Then either:
 
 ```bash
