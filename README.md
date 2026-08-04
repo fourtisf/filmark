@@ -75,11 +75,22 @@ labels come off only when real data is behind them.
 ## Getting started
 
 ```bash
-pnpm install
+pnpm install                # runs pnpm build afterwards, via prepare
 cp .env.example .env        # then fill in YELLOWSTONE_ENDPOINT and SOLANA_RPC_URL
 docker compose up -d        # ClickHouse on 8123, Redis on 6379
 pnpm --filter @exitliquidity/ingest run cli migrate
 ```
+
+The build is not optional and not a packaging step. Each workspace package is
+resolved through its `exports` field, which points at `dist/`, so the CLI cannot
+import `@exitliquidity/core` until that directory exists. `prepare` runs the
+build for you after `pnpm install`; if you ever see
+
+```
+ERR_MODULE_NOT_FOUND … @exitliquidity/core/dist/index.js
+```
+
+it means the build was skipped — run `pnpm build` and try again.
 
 Then either:
 
