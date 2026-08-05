@@ -402,9 +402,23 @@ export class SolanaRpcClient {
           });
 
           if (!response.ok) {
-            // 429 and 5xx are the shapes rate limits and provider hiccups take.
-            // The body is where the provider says which limit was hit and for
-            // how long; a bare status number sends the operator guessing.
+            /*
+             * A 429 is the endpoint stating its real limit, which is worth more
+             * than the one in the config. Retrying at the pace that was just
+             * refused earns the same answer five times and then gives up, so
+             * the limiter is slowed before the next attempt is scheduled — and
+             * stays slowed for the calls behind this one, which are the ones
+             * that would otherwise arrive at exactly the rejected rate.
+             */
+            if (response.status === 429 && this.#limiter.backOff()) {
+              this.#logger.warn(
+                { method, attempt, rate: Number(this.#limiter.effectiveRate.toFixed(2)) },
+                'rate limited; slowing to below the configured rate. If this persists, SOLANA_RPC_MAX_RPS is above what the plan allows',
+              );
+            }
+            // 5xx is the other shape a provider hiccup takes. The body is where
+            // it says which limit was hit and for how long; a bare status
+            // number sends the operator guessing.
             const text = await response.text().catch(() => '<unreadable>');
             throw new UpstreamError(`RPC ${method} returned HTTP ${response.status}`, {
               context: {
@@ -418,7 +432,12 @@ export class SolanaRpcClient {
           }
 
           const body: unknown = await response.json();
-          return parse(body, attempt);
+          const parsed = parse(body, attempt);
+          // Clean call. Ease back towards the configured rate, slowly enough
+          // that the client settles under the real limit instead of
+          // oscillating across it.
+          this.#limiter.recover();
+          return parsed;
         } catch (error) {
           if (error instanceof UpstreamError) throw error;
           // The identity of the underlying failure goes into context as well as

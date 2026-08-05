@@ -183,6 +183,36 @@ describe('SolanaRpcClient batching', () => {
     expect(call).toBe(2);
   });
 
+  it('slows itself when the endpoint says the configured rate is too high', async () => {
+    /*
+     * The live failure. Overlapping the batches made the client finally reach
+     * the rate it was configured for, and the plan turned out to be below it —
+     * so a setting that had never been exercised became a 503 on every trace.
+     * Retrying at the refused pace just spends five attempts confirming it.
+     */
+    let call = 0;
+    const client = new SolanaRpcClient({
+      url: 'https://rpc.invalid',
+      maxRequestsPerSecond: 200,
+      batchSize: 2,
+      maxAttempts: 4,
+      logger: silentLogger,
+      fetchImpl: async (_url, init): Promise<Response> => {
+        call += 1;
+        if (call <= 2) return new Response('slow down', { status: 429 });
+        return batchOk(JSON.parse((init?.body ?? '[]') as string) as { id: number }[]);
+      },
+    });
+
+    const started = Date.now();
+    await expect(client.getTransactions(['a', 'b'])).resolves.toHaveLength(2);
+
+    // Two rejections quadruple the interval, so the third attempt cannot have
+    // been scheduled at the original pace.
+    expect(Date.now() - started).toBeGreaterThan(20);
+    expect(call).toBe(3);
+  });
+
   it('advertises a window wide enough for its own overlap', async () => {
     // A caller that chunks to the batch width hands over one batch per call,
     // and the concurrency inside has nothing to run alongside. The window is

@@ -243,6 +243,57 @@ describe('RateLimiter', () => {
   it('rejects a cost below one', async () => {
     await expect(new RateLimiter(10).acquire(undefined, 0)).rejects.toThrow(RangeError);
   });
+
+  it('halves its rate when the far end refuses', async () => {
+    /*
+     * The configured rate is what an operator believes the plan allows, and
+     * that belief is routinely wrong. Obeying it regardless turns a number two
+     * too large into a wall of 429s and a request that fails outright — which
+     * reads as a broken key rather than as a setting. The endpoint's refusal is
+     * better evidence than the config, so it wins.
+     */
+    const limiter = new RateLimiter(100); // 10ms per unit
+    expect(limiter.effectiveRate).toBeCloseTo(100, 5);
+
+    limiter.backOff();
+    expect(limiter.effectiveRate).toBeCloseTo(50, 5);
+    limiter.backOff();
+    expect(limiter.effectiveRate).toBeCloseTo(25, 5);
+  });
+
+  it('stops halving at a floor rather than backing off to a standstill', () => {
+    const limiter = new RateLimiter(100);
+    for (let i = 0; i < 20; i += 1) limiter.backOff();
+
+    expect(limiter.backOff()).toBe(false);
+    expect(limiter.effectiveRate).toBeGreaterThan(0);
+  });
+
+  it('recovers more slowly than it backs off, so it settles instead of oscillating', () => {
+    const limiter = new RateLimiter(100);
+    limiter.backOff();
+    const halved = limiter.effectiveRate;
+
+    limiter.recover();
+    expect(limiter.effectiveRate).toBeGreaterThan(halved);
+    // One clean call must not undo one rejection, or the client spends its life
+    // crossing the threshold it just found.
+    expect(limiter.effectiveRate).toBeLessThan(100);
+
+    for (let i = 0; i < 200; i += 1) limiter.recover();
+    expect(limiter.effectiveRate).toBeCloseTo(100, 5);
+  });
+
+  it('holds the next slot back when it backs off', async () => {
+    // The calls already queued behind a rejection are exactly the ones that
+    // would otherwise arrive at the rate that was just refused.
+    const limiter = new RateLimiter(50); // 20ms per unit
+    limiter.backOff(); // 40ms per unit, and the next slot pushed out
+
+    const started = Date.now();
+    await limiter.acquire();
+    expect(Date.now() - started).toBeGreaterThanOrEqual(25);
+  });
 });
 
 describe('mapWithConcurrency', () => {
