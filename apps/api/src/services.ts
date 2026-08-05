@@ -15,6 +15,8 @@ export interface ApiServices {
   readonly cache: ResultCache<TraceReport>;
   readonly semaphore: Semaphore;
   readonly metrics: ApiMetrics;
+  /** Exposed so startup can prove the feed answers before a trace needs it. */
+  readonly prices: SolUsdCache;
   readonly rpcEndpoint: string;
   readonly corsOrigins: readonly string[];
 }
@@ -90,6 +92,7 @@ export function createServices(config: Config): ApiServices {
     }),
     semaphore: new Semaphore({ limit: config.API_MAX_CONCURRENT_TRACES }),
     metrics: createApiMetrics(),
+    prices,
     rpcEndpoint: rpc.endpoint,
     corsOrigins: parseOrigins(config.API_CORS_ORIGINS),
   };

@@ -110,6 +110,15 @@ export class PythClient {
    *
    * Bounded rather than unbounded: Benchmarks is a shared public endpoint and
    * a hundred simultaneous requests is how a client earns a rate limit.
+   *
+   * One window failing does not discard the rest. A year is 106 requests and
+   * the odds that all of them succeed are not the odds that one does; throwing
+   * on the first failure threw away a hundred good windows with it, and left
+   * the series empty — which reads downstream as a wallet whose every swap was
+   * unpriceable. The series is sparse by design and a minute it does not hold
+   * returns null rather than a guess, so a hole is already something the
+   * staleness bound handles honestly. Only a range where *nothing* could be
+   * fetched raises, because that is a failure rather than a gap.
    */
   async fetchCandles(
     fromSec: number,
@@ -119,13 +128,32 @@ export class PythClient {
     if (toSec < fromSec) throw new RangeError('toSec must be >= fromSec');
 
     const windows = candleWindows(fromSec, toSec);
+    const failures: unknown[] = [];
 
     const pages = await mapWithConcurrency(
       windows,
       Math.min(BENCHMARKS_CONCURRENCY, windows.length) || 1,
-      (window) => this.#fetchWindow(window.from, window.to, signal),
+      async (window) => {
+        try {
+          return await this.#fetchWindow(window.from, window.to, signal);
+        } catch (error) {
+          // An abort is the caller leaving, not a window failing; it must not
+          // be absorbed into a partial answer.
+          if (signal?.aborted === true) throw error;
+          failures.push(error);
+          return [];
+        }
+      },
       signal,
     );
+
+    if (failures.length === windows.length) throw failures[0];
+    if (failures.length > 0) {
+      this.#logger.warn(
+        { windows: windows.length, failed: failures.length, err: describeError(failures[0]) },
+        'some SOL/USD windows could not be fetched; the series will have holes in it',
+      );
+    }
 
     const byMinute = new Map<number, SolUsdCandle>();
     for (const page of pages) {

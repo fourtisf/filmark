@@ -181,7 +181,7 @@ describe('PythClient', () => {
     expect(await client.fetchCandles(BASE, BASE + MINUTE)).toEqual([]);
   });
 
-  it('raises an error status rather than returning a partial series', async () => {
+  it('raises an error status rather than reporting an empty range', async () => {
     const client = clientWith(() => ({ s: 'error', errmsg: 'upstream down' }));
     await expect(client.fetchCandles(BASE, BASE + MINUTE)).rejects.toThrow(/upstream down/);
   });
@@ -235,6 +235,34 @@ describe('PythClient', () => {
       // Each window starts on the minute after the previous one ended.
       expect(requested[i]?.[0]).toBe((requested[i - 1]?.[1] as number) + MINUTE);
     }
+  });
+
+  it('keeps the windows that worked when one of them fails', async () => {
+    /*
+     * A year is 106 requests, and the odds that all of them succeed are not the
+     * odds that one does. Throwing on the first failure discarded a hundred
+     * good windows with it and left the series empty — which reads downstream
+     * as a wallet whose every swap was unpriceable, a finding about the wallet
+     * manufactured by one bad response.
+     */
+    let call = 0;
+    const client = clientWith(() => {
+      call += 1;
+      if (call === 2) return { s: 'error', errmsg: 'rate limited' };
+      return { s: 'ok', t: [BASE + call * MINUTE], o: [1], h: [1], l: [1], c: [1] };
+    });
+
+    const candles = await client.fetchCandles(BASE, BASE + 20_000 * MINUTE);
+
+    // Five windows, one refused: four bars survive rather than none.
+    expect(candles).toHaveLength(4);
+  });
+
+  it('still raises when the whole range failed, because that is not a gap', async () => {
+    const client = clientWith(() => ({ s: 'error', errmsg: 'upstream down' }));
+    await expect(client.fetchCandles(BASE, BASE + 20_000 * MINUTE)).rejects.toThrow(
+      /upstream down/,
+    );
   });
 
   it('overlaps the requests rather than running a year of them end to end', async () => {

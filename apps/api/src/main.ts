@@ -1,5 +1,12 @@
 #!/usr/bin/env node
-import { ConfigError, describeError, loadConfig, loadEnvFile } from '@exitliquidity/core';
+import {
+  ConfigError,
+  SECONDS_PER_MINUTE,
+  describeError,
+  loadConfig,
+  loadEnvFile,
+  nowSeconds,
+} from '@exitliquidity/core';
 import { createHttpServer } from './http.js';
 import { createServices, worstCaseTraceSeconds } from './services.js';
 
@@ -77,6 +84,29 @@ async function main(): Promise<number> {
       "API_TRACE_TIMEOUT_MS is above 90s; if anything proxies this service, set it below that proxy's own response timeout or slow traces will be answered by the proxy instead of by this API",
     );
   }
+
+  /*
+   * Prove the price feed answers, without making anyone wait for the proof.
+   *
+   * With no SOL/USD series there is no cost basis, so every trace comes back
+   * `unpriced_history` — correct, and discovered two minutes into a crawl that
+   * had nothing wrong with it. One hour of bars at startup turns that into a
+   * line in the log before the first request arrives. Deliberately not part of
+   * readiness: a trace with no prices still reports what it read, and refusing
+   * to serve would be a worse answer than an honest partial one.
+   */
+  const nowSec = nowSeconds();
+  void services.prices.ensure(nowSec - 60 * SECONDS_PER_MINUTE, nowSec).then(() => {
+    const range = services.prices.seriesRange;
+    if (range === null) {
+      logger.warn(
+        { benchmarks: config.PYTH_BENCHMARKS_URL },
+        'the SOL/USD feed returned nothing at startup, so every trace will report unpriced_history until it answers. Check this host can reach PYTH_BENCHMARKS_URL',
+      );
+    } else {
+      logger.info({ minutes: range.minutes }, 'SOL/USD feed answered');
+    }
+  });
 
   await new Promise<void>((resolve) => {
     let closing = false;
