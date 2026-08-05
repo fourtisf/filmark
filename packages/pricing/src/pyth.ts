@@ -1,9 +1,9 @@
 import {
+  SECONDS_PER_MINUTE,
   UpstreamError,
-  chunk,
   describeError,
   floorToMinute,
-  minuteRange,
+  mapWithConcurrency,
   retry,
   silentLogger,
   type Logger,
@@ -24,6 +24,28 @@ export const SOL_USD_SYMBOL = 'Crypto.SOL/USD';
 
 /** Minutes per Benchmarks request. The API rejects unbounded ranges. */
 const MAX_BARS_PER_REQUEST = 5000;
+
+/** Benchmarks requests in flight at once. Shared public endpoint; keep it modest. */
+const BENCHMARKS_CONCURRENCY = 4;
+
+/**
+ * The request windows covering `[fromSec, toSec]`, computed rather than listed.
+ *
+ * Materialising every minute to chunk it allocated an entry per minute — half a
+ * million of them for a year — to derive a number of windows that arithmetic
+ * gives directly.
+ */
+function candleWindows(fromSec: number, toSec: number): { from: number; to: number }[] {
+  const first = floorToMinute(fromSec);
+  const last = floorToMinute(toSec);
+  const span = MAX_BARS_PER_REQUEST * SECONDS_PER_MINUTE;
+
+  const windows: { from: number; to: number }[] = [];
+  for (let start = first; start <= last; start += span) {
+    windows.push({ from: start, to: Math.min(last, start + span - SECONDS_PER_MINUTE) });
+  }
+  return windows;
+}
 
 export interface PythClientOptions {
   readonly benchmarksUrl?: string;
@@ -78,7 +100,16 @@ export class PythClient {
    * One-minute SOL/USD bars covering `[fromSec, toSec]`.
    *
    * Requests are chunked and the results merged, so the caller can ask for a
-   * quarter of history in one call.
+   * quarter of history in one call — but the chunk count grows with the range,
+   * and a year is 106 of them. Run one after another that is a minute of wall
+   * clock spent inside a trace that has three, before a single swap has been
+   * priced; a live service widened its lookback from 90 days to 365 and paid
+   * for it here rather than at the RPC endpoint it was watching. A small
+   * concurrency is what makes the range a caller asks for and the time it costs
+   * stop being the same number.
+   *
+   * Bounded rather than unbounded: Benchmarks is a shared public endpoint and
+   * a hundred simultaneous requests is how a client earns a rate limit.
    */
   async fetchCandles(
     fromSec: number,
@@ -87,15 +118,18 @@ export class PythClient {
   ): Promise<SolUsdCandle[]> {
     if (toSec < fromSec) throw new RangeError('toSec must be >= fromSec');
 
-    const windows = chunk(minuteRange(fromSec, toSec), MAX_BARS_PER_REQUEST)
-      .map((minutes) => ({ from: minutes[0] as number, to: minutes[minutes.length - 1] as number }))
-      .filter((window) => window.from !== undefined);
+    const windows = candleWindows(fromSec, toSec);
+
+    const pages = await mapWithConcurrency(
+      windows,
+      Math.min(BENCHMARKS_CONCURRENCY, windows.length) || 1,
+      (window) => this.#fetchWindow(window.from, window.to, signal),
+      signal,
+    );
 
     const byMinute = new Map<number, SolUsdCandle>();
-    for (const window of windows) {
-      for (const candle of await this.#fetchWindow(window.from, window.to, signal)) {
-        byMinute.set(candle.minuteTs, candle);
-      }
+    for (const page of pages) {
+      for (const candle of page) byMinute.set(candle.minuteTs, candle);
     }
 
     return [...byMinute.values()].sort((a, b) => a.minuteTs - b.minuteTs);

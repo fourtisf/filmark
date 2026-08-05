@@ -215,6 +215,59 @@ describe('PythClient', () => {
     );
   });
 
+  it('covers a long range exactly once, with no gap and no overlap', async () => {
+    const requested: [number, number][] = [];
+    const client = clientWith((url) => {
+      const from = Number(url.searchParams.get('from'));
+      const to = Number(url.searchParams.get('to'));
+      requested.push([from, to]);
+      return { s: 'no_data' };
+    });
+
+    // A year, which is what a lookback raised to 365 days asks for.
+    const last = BASE + 365 * 24 * 60 * MINUTE;
+    await client.fetchCandles(BASE, last);
+
+    requested.sort((a, b) => a[0] - b[0]);
+    expect(requested[0]?.[0]).toBe(BASE);
+    expect(requested[requested.length - 1]?.[1]).toBe(last);
+    for (let i = 1; i < requested.length; i += 1) {
+      // Each window starts on the minute after the previous one ended.
+      expect(requested[i]?.[0]).toBe((requested[i - 1]?.[1] as number) + MINUTE);
+    }
+  });
+
+  it('overlaps the requests rather than running a year of them end to end', async () => {
+    /*
+     * A year is 106 windows. Serially that is a minute of wall clock burnt
+     * inside a trace that has three, before a single swap has been priced —
+     * which is what raising a live service's lookback from 90 days to 365
+     * actually cost. Concurrency is bounded because Benchmarks is a shared
+     * public endpoint, so both ends of that are asserted here.
+     */
+    let inFlight = 0;
+    let peak = 0;
+    const client = new PythClient({
+      maxAttempts: 1,
+      fetchImpl: async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inFlight -= 1;
+        return new Response(JSON.stringify({ s: 'no_data' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+
+    // 20,000 minutes is five windows of 5,000.
+    await client.fetchCandles(BASE, BASE + 20_000 * MINUTE);
+
+    expect(peak).toBeGreaterThan(1); // they overlapped
+    expect(peak).toBeLessThanOrEqual(4); // and stayed inside the cap
+  });
+
   it('applies the Pyth exponent to the latest price mantissa', async () => {
     const client = clientWith(() => ({
       parsed: [
