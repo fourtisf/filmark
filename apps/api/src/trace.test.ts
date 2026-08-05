@@ -77,6 +77,7 @@ function scannerFor(
       swaps: wallet,
       census: censusOf(wallet),
       foreignSwaps: 0,
+      parseSkips: {},
       oldestTs: BASE_TS,
       newestTs: BASE_TS + 3600,
       truncated: false,
@@ -195,12 +196,61 @@ describe('TraceService', () => {
     expect(report.notes.join(' ')).toContain('Nothing is attributed');
   });
 
-  it('excludes a position whose tokens arrived off-swap', async () => {
+  it('refuses to call sells-with-no-buys a result', async () => {
+    // The live failure this exists to prevent. A real pump.fun trader came back
+    // `no_losses` with twenty closed positions, every one `unknown_basis` and
+    // not one still open — a shape only reachable if the read saw sells and no
+    // buys. A wallet cannot sell what it never bought, so that is not a quiet
+    // quarter, it is a read whose every figure is void. Reporting it as
+    // "nothing closed in the red" states a finding the data cannot support.
     const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
     const report = await service([sell], [sell]).trace(VICTIM);
 
-    expect(report.status).toBe('no_losses');
+    expect(report.status).toBe('unreadable_history');
     expect(report.coverage.excluded['unknown_basis']).toBe(1);
+    expect(report.coverage.swapCensus).toEqual({ 'pumpswap:sell': 1 });
+    expect(report.notes.join(' ')).toContain('cannot sell what it never bought');
+    expect(report.totals.realisedPnlUsd).toBe(0);
+  });
+
+  it('still reports no_losses when buys were read and nothing lost', async () => {
+    // The guard must not swallow the honest case: buys present, positions
+    // closed, none of them in the red.
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 100, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 400, offsetSec: 60 });
+
+    const report = await service([buy, sell], [buy, sell]).trace(VICTIM);
+    expect(report.status).toBe('no_losses');
+  });
+
+  it('leaves attribution-only figures null when attribution never ran', async () => {
+    // A zero here is indistinguishable from a measurement. `legsWithUnknownFees:
+    // 0` on a trace that examined no leg reads as "the fees were all known",
+    // which sent a diagnosis down the wrong path for a whole pass.
+    const report = await service([], []).trace(VICTIM);
+
+    expect(report.status).toBe('no_swaps');
+    expect(report.coverage.positionsAttributed).toBeNull();
+    expect(report.coverage.legsSkipped).toBeNull();
+    expect(report.coverage.legsWithUnknownFees).toBeNull();
+    // Measured on every path, so these stay numbers.
+    expect(report.coverage.losingPositions).toBe(0);
+    expect(report.coverage.transactionsFetched).toBe(0);
+  });
+
+  it('measures those figures once attribution does run', async () => {
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 500, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 300 });
+    const pool = [
+      buy,
+      sell,
+      makeSwap({ wallet: 'x', side: 'sell', base: 500, usd: 500, offsetSec: 1 }),
+    ];
+
+    const report = await service([buy, sell], pool).trace(VICTIM);
+    expect(report.coverage.positionsAttributed).toBe(1);
+    expect(report.coverage.legsSkipped).toBe(0);
+    expect(report.coverage.legsWithUnknownFees).toBe(0);
   });
 
   it('always says that attribution measures overlap, not payment', async () => {

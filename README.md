@@ -69,6 +69,15 @@ folded into the headline figure, and the console prints all of it under the
 number. That is §7.2 and §7.4, not decoration — see `TRACE_*` in `.env.example`
 for the budgets that produce it.
 
+**When a result looks wrong, read `coverage.swapCensus` first.** It counts the
+wallet's own swaps by venue and direction. Sells with no buys is not a wallet
+that only ever sold — it is a read that lost the entry legs, and the trace
+returns `unreadable_history` rather than a total. The usual cause is a trading
+bot: both venues name the trader inside their own event, never the fee payer, so
+entries placed through Axiom, Photon, BullX or Trojan land under the bot's
+address. `coverage.foreignSwaps` counts exactly those, and a large value there
+names the address worth tracing instead. See DECISIONS.md.
+
 ### Cost
 
 A trace is hundreds of RPC calls and is billed as such. `SOLANA_RPC_MAX_RPS`

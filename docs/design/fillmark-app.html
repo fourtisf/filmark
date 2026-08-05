@@ -897,6 +897,16 @@ const NO_RESULT={
      ${plural(r.totals.positionsClosed,"position was","positions were")} closed and read, and none
      realised a loss against a cost basis this build can stand behind. Open positions are excluded
      on purpose: an unrealised loss has not paid anyone yet.</p>`],
+  unreadable_history:["This wallet was read wrong, not read empty.",r=>
+    `<p style="margin-top:16px">Sells were found and no buys at all. A wallet cannot sell what
+     it never bought, so this is not a quiet quarter — the read lost the entry legs, and every
+     figure derived from it would be void.</p>
+     <p style="margin-top:14px">The usual cause is a trading bot. Both venues name the trader
+     inside their own event, never whoever paid the fee, so entries placed through Axiom,
+     Photon, BullX, Trojan or similar land under the bot's address instead of yours.
+     ${r.coverage.foreignSwaps} ${plural(r.coverage.foreignSwaps,"swap by another wallet was","swaps by other wallets were")}
+     seen inside this wallet's own transactions — if that number is large, trace that address
+     instead. The other possibility is that the buys happened on a venue with no parser yet.</p>`],
   no_attribution:["Losses found. Nobody to attribute them to.",()=>
     `<p style="margin-top:16px">Every wallet selling into those windows was filtered out — the
      trader itself, a bot round-tripping inventory, or a trade nothing could price. Nothing is
@@ -951,11 +961,15 @@ function coverageHtml(r){
     ["Window",`${c.lookbackDays} day lookback`],
     ["Venues read",c.venues.join(", ")],
     ["Transactions read",c.transactionsFetched.toLocaleString("en-US")],
-    ["Positions attributed",`${c.positionsAttributed} of ${c.losingPositions}`],
+    ["Positions attributed",c.positionsAttributed===null
+      ? `— of ${c.losingPositions}`
+      : `${c.positionsAttributed} of ${c.losingPositions}`],
     ["Attributed",usd(t.attributedUsd)],
     ["Unattributed",usd(t.unattributedUsd)],
     ["Realised PnL",signedUsd(t.realisedPnlUsd)],
     ["Scan time",(r.elapsedMs/1000).toFixed(1)+"s"],
+    ["Swaps read",Object.entries(c.swapCensus||{}).map(([k,v])=>`${k} ${v}`).join("  ")||"none"],
+    ["Other wallets' swaps",String(c.foreignSwaps??0)],
   ];
   return `<div class="cov-g">${facts.map(f=>
       `<div><div class="st-l">${esc(f[0])}</div><b>${esc(f[1])}</b></div>`).join("")}</div>`

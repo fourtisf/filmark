@@ -17,6 +17,16 @@ export type TraceStatus =
   | 'no_swaps'
   /** Swaps, but nothing closed at a loss with a basis we can stand behind. */
   | 'no_losses'
+  /**
+   * Sells with no buys behind them. The read lost the entry legs.
+   *
+   * Distinct from `no_losses` because it is not a finding about the wallet at
+   * all. A wallet cannot sell what it never bought, so a ledger of sales with
+   * no purchases is arithmetically impossible rather than merely quiet, and
+   * every figure derived from it is void. Reporting it as "nothing closed in
+   * the red" states a result the data cannot support — §7.1.
+   */
+  | 'unreadable_history'
   /** Losses, but no window produced an eligible counterparty. */
   | 'no_attribution';
 
@@ -94,17 +104,36 @@ export interface TraceCoverage {
   readonly foreignSwaps: number;
   /** True when the signature budget ran out before the lookback window did. */
   readonly historyTruncated: boolean;
-  /** Losing positions found, and how many attribution actually ran on. */
+  /** Losing positions found. Always measured. */
   readonly losingPositions: number;
-  readonly positionsAttributed: number;
+  /**
+   * How many of them attribution ran on. Null when it never ran.
+   *
+   * Null rather than zero, and the same for the two fields below, because a
+   * zero here is indistinguishable from a measurement. A trace that stopped
+   * before attribution reported `legsWithUnknownFees: 0`, which reads as "the
+   * fees were all known" and is really "no leg was ever examined" — a
+   * constant wearing the clothes of a finding. That cost a whole investigation
+   * pass, which is precisely the §7.4 failure applied to our own diagnostics.
+   */
+  readonly positionsAttributed: number | null;
   /** Buy legs skipped because the per-position leg cap was reached. */
-  readonly legsSkipped: number;
+  readonly legsSkipped: number | null;
   /** Pools whose history could not be crawled far enough to net every window. */
   readonly poolsIncomplete: number;
   /** Positions excluded, by the reason they were excluded. */
   readonly excluded: Readonly<Record<string, number>>;
-  /** Buy legs whose venue reports no fee, so their basis is understated. */
-  readonly legsWithUnknownFees: number;
+  /**
+   * Venue instructions that matched a parser but produced no swap, by venue
+   * and reason — `{"pumpfun:event_missing": 3}`.
+   *
+   * The competing explanation for a missing trade. Without it, a swap the
+   * parser refused and a swap that belonged to another wallet look identical
+   * from the outside: both are simply absent.
+   */
+  readonly parseSkips: Readonly<Record<string, number>>;
+  /** Buy legs whose venue reports no fee. Null when no leg was examined. */
+  readonly legsWithUnknownFees: number | null;
   readonly tokenSymbolsAvailable: boolean;
 }
 

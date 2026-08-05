@@ -261,4 +261,81 @@ describe('PumpFunParser', () => {
       [secondMint, 2_000_000_000n, secondUser],
     ]);
   });
+  it("keeps a transaction's other swaps when one node will not decode", () => {
+    // A router batches fills; if the layout has drifted, one of them throws
+    // inside the decoder. The error boundary used to sit around the whole
+    // parser in registry.ts, so the throw discarded every swap already
+    // collected for that transaction — three good fills lost because a fourth
+    // had a byte out of place. Here the first trade's `is_buy` is neither 0
+    // nor 1, which is exactly what a shifted field looks like.
+    const goodMint = fakePubkey(70);
+    const goodUser = fakePubkey(71);
+
+    const builder = new TransactionBuilder().blockTime(1_735_689_600);
+
+    const badIx = builder.topLevel({
+      programId: PUMP_FUN_PROGRAM_ID,
+      accounts: [fakePubkey(1), fakePubkey(2), MINT, CURVE, fakePubkey(5), fakePubkey(6), USER],
+      data: new BinaryWriter().bytes(IX_BUY.bytes).u64(1n).u64(1n).toBytes(),
+    });
+
+    // 32-byte mint, then two u64s, puts the bool at offset 48.
+    const corrupt = encodeTradeEvent({
+      mint: MINT,
+      solAmount: 1_000_000_000n,
+      tokenAmount: 1_000_000n,
+      isBuy: true,
+      user: USER,
+      timestamp: TIMESTAMP,
+    });
+    corrupt[48] = 2;
+
+    builder.inner(badIx, {
+      programId: PUMP_FUN_PROGRAM_ID,
+      accounts: [fakePubkey(90)],
+      data: anchorEventData(TRADE_EVENT_DISCRIMINATOR, corrupt),
+    });
+
+    const goodIx = builder.topLevel({
+      programId: PUMP_FUN_PROGRAM_ID,
+      accounts: [
+        fakePubkey(1),
+        fakePubkey(2),
+        goodMint,
+        CURVE,
+        fakePubkey(5),
+        fakePubkey(6),
+        goodUser,
+      ],
+      data: new BinaryWriter().bytes(IX_SELL.bytes).u64(5n).u64(5n).toBytes(),
+    });
+    builder.inner(goodIx, {
+      programId: PUMP_FUN_PROGRAM_ID,
+      accounts: [fakePubkey(91)],
+      data: anchorEventData(
+        TRADE_EVENT_DISCRIMINATOR,
+        encodeTradeEvent({
+          mint: goodMint,
+          solAmount: 3_000_000_000n,
+          tokenAmount: 7_000_000n,
+          isBuy: false,
+          user: goodUser,
+          timestamp: TIMESTAMP,
+        }),
+      ),
+    });
+
+    const { swaps, skipped } = pumpFunParser.parse(builder.context());
+
+    expect(swaps).toHaveLength(1);
+    expect(swaps[0]?.mint).toBe(goodMint);
+    expect(swaps[0]?.wallet).toBe(goodUser);
+    expect(swaps[0]?.side).toBe('sell');
+
+    // The failure is counted, not silent: a rising decode_error is how a
+    // drifted layout announces itself.
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.reason).toBe('decode_error');
+    expect(skipped[0]?.detail).toContain('invalid bool byte 2');
+  });
 });

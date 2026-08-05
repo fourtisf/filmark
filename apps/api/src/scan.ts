@@ -72,6 +72,8 @@ export interface WalletScan {
   readonly census: SwapCensus;
   /** Swaps parsed in the crawled transactions that belonged to someone else. */
   readonly foreignSwaps: number;
+  /** Venue instructions refused by a parser, by venue and reason. */
+  readonly parseSkips: Readonly<Record<string, number>>;
   /** Unix seconds of the oldest signature the crawl reached. */
   readonly oldestTs: number | null;
   readonly newestTs: number | null;
@@ -167,7 +169,11 @@ export class ChainScanner {
     const { signatures, truncated } = await this.#crawlSignatures(wallet, cutoff, cost, signal);
     const usable = signatures.filter((entry) => entry.err == null);
 
-    const parsed = await this.#parseSignatures(usable, cost, signal);
+    const parseSkips: Record<string, number> = {};
+    const parsed = await this.#parseSignatures(usable, cost, parseSkips, signal);
+    // The venue event names the trader, never the fee payer, so a wallet whose
+    // entry legs are placed by a bot or an aggregator sees them land under that
+    // bot's address. Those swaps are counted rather than silently dropped.
     const mine = parsed.filter((entry) => entry.swap.wallet === wallet);
     const swaps = await this.#normalise(mine, signal);
 
@@ -181,6 +187,7 @@ export class ChainScanner {
       // A large number beside an empty census means the trades are being made
       // through something else — a bot or a router whose own account signs.
       foreignSwaps: parsed.length - mine.length,
+      parseSkips,
       oldestTs: times.length > 0 ? Math.min(...times) : null,
       newestTs: times.length > 0 ? Math.max(...times) : null,
       truncated,
@@ -251,7 +258,7 @@ export class ChainScanner {
     const capped = wanted.slice(0, budget.transactions);
     budget.transactions -= capped.length;
 
-    const parsed = await this.#parseSignatures(capped, cost, signal);
+    const parsed = await this.#parseSignatures(capped, cost, {}, signal);
     const swaps = await this.#normalise(
       parsed.filter((entry) => entry.swap.poolId === poolId),
       signal,
@@ -299,9 +306,19 @@ export class ChainScanner {
     return { signatures, truncated: true };
   }
 
+  /**
+   * Decodes a batch of transactions into swaps, tallying what was refused.
+   *
+   * The skips are the competing explanation for a missing trade, and they used
+   * to be thrown on the floor here. Without them, a swap the parser could not
+   * decode and a swap that belonged to another wallet are indistinguishable
+   * from the outside — both are simply absent — and there is no way to tell a
+   * broken decoder from a wallet that trades through a bot.
+   */
   async #parseSignatures(
     signatures: readonly SignatureInfo[],
     cost: ScanCost,
+    skips: Record<string, number>,
     signal?: AbortSignal,
   ): Promise<ParsedWithTime[]> {
     const out: ParsedWithTime[] = [];
@@ -322,12 +339,18 @@ export class ChainScanner {
           const raw = fromRpcTransaction(response);
           if (raw.failed) return;
           const ctx = TxContext.from(raw);
-          for (const swap of parseTransaction(ctx).swaps) {
+          const parsed = parseTransaction(ctx);
+          for (const entry of parsed.skipped) {
+            const key = `${entry.venue}:${entry.reason}`;
+            skips[key] = (skips[key] ?? 0) + 1;
+          }
+          for (const swap of parsed.swaps) {
             out.push({ swap, ctx, blockTime: swap.blockTime ?? raw.blockTime ?? info.blockTime });
           }
         } catch (error) {
           // One undecodable transaction must not end a trace. It is logged and
-          // skipped, exactly as the ingest pipeline treats it.
+          // counted, exactly as the ingest pipeline treats it.
+          skips['transaction:undecodable'] = (skips['transaction:undecodable'] ?? 0) + 1;
           this.#logger.debug(
             { signature: info.signature, err: describeError(error) },
             'skipping transaction that would not decode',

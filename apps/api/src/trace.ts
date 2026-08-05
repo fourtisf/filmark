@@ -103,11 +103,50 @@ export class TraceService {
     }
 
     if (scan.swaps.length === 0) {
-      return this.#empty(wallet, 'no_swaps', scan, cost, startedAt, notes, 0, 0, 0, {});
+      return this.#empty(wallet, 'no_swaps', scan, cost, startedAt, notes, 0);
     }
 
     const positions = accountPositions(wallet, scan.swaps);
     const excluded = tallyExclusions(positions);
+
+    /*
+     * A wallet cannot sell what it never bought.
+     *
+     * Sells with no buys is not a quiet quarter; it is arithmetically
+     * impossible, and it means the read lost the entry legs rather than that
+     * the wallet only ever sold. Every figure derived from it is void, so this
+     * refuses to answer instead of reporting "nothing closed in the red" —
+     * which is a finding the data cannot support (§7.1).
+     *
+     * The likeliest cause is the trader-identity filter in the scan: both
+     * venues name the trader in their event, never the fee payer, so a wallet
+     * whose entries are placed by a bot or an aggregator sees them land under
+     * that bot's address. `foreignSwaps` is how many such swaps were seen in
+     * this wallet's own transactions, and it is the number to look at first.
+     */
+    const sideTotal = (suffix: string): number =>
+      Object.entries(scan.census)
+        .filter(([key]) => key.endsWith(suffix))
+        .reduce((total, [, count]) => total + count, 0);
+    const buys = sideTotal(':buy');
+    const sells = sideTotal(':sell');
+
+    if (sells > 0 && buys === 0) {
+      notes.push(
+        `${sells} ${plural(sells, 'sell was', 'sells were')} read for this wallet and no buys at all, which cannot be what happened — a wallet cannot sell what it never bought. The entry legs were either placed by something the venue names as a different trader (${scan.foreignSwaps} such ${plural(scan.foreignSwaps, 'swap was', 'swaps were')} seen in this wallet's own transactions), or made on a venue with no parser. No profit or loss is reported rather than one invented from a basis that was never read.`,
+      );
+      return this.#empty(
+        wallet,
+        'unreadable_history',
+        scan,
+        cost,
+        startedAt,
+        notes,
+        positions.filter((p) => p.status === 'closed').length,
+        excluded,
+      );
+    }
+
     const losing = positions
       .filter(isAttributable)
       .sort((a, b) => a.realisedPnlUsd - b.realisedPnlUsd);
@@ -121,8 +160,6 @@ export class TraceService {
         startedAt,
         notes,
         positions.filter((p) => p.status === 'closed').length,
-        0,
-        0,
         excluded,
       );
     }
@@ -205,24 +242,14 @@ export class TraceService {
       totals,
       tokens: buildTokens(analysed, merged, symbols),
       counterparties: counterparties.map((entry) => toCounterparty(entry, symbols)),
-      coverage: {
-        lookbackDays: this.#limits.lookbackDays,
-        venues: PARSED_VENUES,
-        fromTs: scan.oldestTs,
-        toTs: scan.newestTs,
-        signaturesRead: cost.signaturesRead,
-        transactionsFetched: cost.transactionsFetched,
-        swapCensus: scan.census,
-        foreignSwaps: scan.foreignSwaps,
-        historyTruncated: scan.truncated,
+      coverage: this.#coverage(scan, cost, {
         losingPositions: losing.length,
-        positionsAttributed: analysed.length,
-        legsSkipped: plan.legsSkipped,
         poolsIncomplete,
         excluded,
+        positionsAttributed: analysed.length,
+        legsSkipped: plan.legsSkipped,
         legsWithUnknownFees: unknownFeeLegs,
-        tokenSymbolsAvailable: this.#metadata.supported,
-      },
+      }),
       notes,
       elapsedMs: Date.now() - startedAt,
     };
@@ -272,19 +299,28 @@ export class TraceService {
     return out;
   }
 
-  #empty(
-    wallet: string,
-    status: TraceStatus,
+  /**
+   * The coverage block, built once for every path.
+   *
+   * There used to be two of these — one computed, one a literal in `#empty` —
+   * and the literal reported `legsWithUnknownFees: 0` on a trace where no leg
+   * was ever examined. A constant that reads as a measurement is the §7.4
+   * failure turned inwards, and it cost a whole diagnostic pass. The fields
+   * that only mean something once attribution runs are null until it does.
+   */
+  #coverage(
     scan: WalletScan,
     cost: { signaturesRead: number; transactionsFetched: number },
-    startedAt: number,
-    notes: string[],
-    positionsClosed: number,
-    losingPositions: number,
-    poolsIncomplete: number,
-    excluded: Record<string, number>,
-  ): TraceReport {
-    const coverage: TraceCoverage = {
+    measured: {
+      losingPositions: number;
+      poolsIncomplete: number;
+      excluded: Record<string, number>;
+      positionsAttributed: number | null;
+      legsSkipped: number | null;
+      legsWithUnknownFees: number | null;
+    },
+  ): TraceCoverage {
+    return {
       lookbackDays: this.#limits.lookbackDays,
       venues: PARSED_VENUES,
       fromTs: scan.oldestTs,
@@ -293,16 +329,24 @@ export class TraceService {
       transactionsFetched: cost.transactionsFetched,
       swapCensus: scan.census,
       foreignSwaps: scan.foreignSwaps,
+      parseSkips: scan.parseSkips,
       historyTruncated: scan.truncated,
-      losingPositions,
-      positionsAttributed: 0,
-      legsSkipped: 0,
-      poolsIncomplete,
-      excluded,
-      legsWithUnknownFees: 0,
       tokenSymbolsAvailable: this.#metadata.supported,
+      ...measured,
     };
+  }
 
+  /** A trace that stopped before it had anything to attribute. */
+  #empty(
+    wallet: string,
+    status: TraceStatus,
+    scan: WalletScan,
+    cost: { signaturesRead: number; transactionsFetched: number },
+    startedAt: number,
+    notes: string[],
+    positionsClosed: number,
+    excluded: Record<string, number> = {},
+  ): TraceReport {
     return {
       wallet,
       generatedAt: nowSeconds(),
@@ -313,13 +357,21 @@ export class TraceService {
         realisedLossUsd: 0,
         realisedPnlUsd: 0,
         positionsClosed,
-        positionsInTheRed: losingPositions,
+        positionsInTheRed: 0,
         counterparties: 0,
         largestCounterpartyUsd: 0,
       },
       tokens: [],
       counterparties: [],
-      coverage,
+      coverage: this.#coverage(scan, cost, {
+        losingPositions: 0,
+        poolsIncomplete: 0,
+        excluded,
+        // Attribution never ran on this path. Null, not zero: see #coverage.
+        positionsAttributed: null,
+        legsSkipped: null,
+        legsWithUnknownFees: null,
+      }),
       notes,
       elapsedMs: Date.now() - startedAt,
     };
@@ -414,6 +466,11 @@ function tallyExclusions(positions: readonly Position[]): Record<string, number>
     tally[reason] = (tally[reason] ?? 0) + 1;
   }
   return tally;
+}
+
+/** Agreement for a count, so a note does not read "1 sells were read". */
+function plural(count: number, one: string, many: string): string {
+  return count === 1 ? one : many;
 }
 
 /** Buy legs grouped by the pool whose history has to be crawled for them. */

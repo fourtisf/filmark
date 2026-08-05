@@ -124,7 +124,25 @@ export class PumpSwapParser implements SwapParser {
     const skipped: ParseSkip[] = [];
 
     for (const node of nodes) {
-      const outcome = this.#parseNode(ctx, node);
+      // The boundary belongs here, not around the whole parser. `registry.ts`
+      // catches a throw from `parse`, but by then the swaps already collected
+      // for this transaction are gone with it — a router batching three fills
+      // loses all three because the fourth had a byte out of place.
+      let outcome: ParsedSwap | ParseSkip | null;
+      try {
+        outcome = this.#parseNode(ctx, node);
+      } catch (error) {
+        skipped.push(
+          skip(
+            VENUE,
+            'decode_error',
+            ctx,
+            node,
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
+        continue;
+      }
       if (outcome === null) continue;
       if ('reason' in outcome) skipped.push(outcome);
       else swaps.push(outcome);

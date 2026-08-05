@@ -171,6 +171,58 @@ were found would keep the headline figure equal to the realised loss, which
 looks tidier and is a lie: it would inflate specific named wallets by an amount
 nothing measured about them.
 
+### The trader is whoever the venue's event names, and that is often a bot
+
+Both parsers take `wallet` from the event payload rather than the fee payer,
+because the event is what settled. That is right, and it has a consequence the
+product has to state rather than absorb: a wallet trading through Axiom, Photon,
+BullX, Trojan or any similar front-end signs the transaction while the venue
+names the bot's account as the trader. Those swaps do not match the address
+somebody pasted.
+
+The failure mode is not a missing trace — it is a _plausible_ one. Entry legs
+are the ones most often routed; exits are more often manual. So a trace can come
+back with sells and no buys, every position `unknown_basis`, and a total of
+zero, which reads as "you never lost anything" and is really "half your trades
+were invisible".
+
+Two things follow, both implemented:
+
+- `coverage.swapCensus` counts the wallet's own swaps by venue and direction,
+  and `coverage.foreignSwaps` counts swaps found in its transactions that
+  another wallet executed. A large second number beside an empty first one is
+  the signature of a bot, and it names the address worth tracing instead.
+- Sells with no buys returns `unreadable_history`, never `no_losses`. A wallet
+  cannot sell what it never bought; reporting that arithmetic as a finding
+  about the wallet is the §7.1 failure with a friendly face.
+
+Resolving it properly means mapping a bot's executing account back to the user
+who funded it, which is Stage 6 clustering. Until then the trace says which
+address to paste instead.
+
+### A zero that was never measured is worse than a gap
+
+`#empty` — the path a trace returns through when it has nothing to attribute —
+used to write `positionsAttributed: 0`, `legsSkipped: 0` and
+`legsWithUnknownFees: 0` as literals, beside fields that were genuinely
+measured. Nothing distinguished them. During a diagnosis
+`legsWithUnknownFees: 0` was read as "the fees were all known" when it meant "no
+leg was ever examined", and that cost a full pass.
+
+Those three are now `number | null`, null until attribution runs, and both paths
+build their coverage through one function. §7.4 forbids fabricated figures in
+the product; a constant wearing the clothes of a measurement is the same fault
+turned inwards, where it is harder to notice and does more damage.
+
+### The parser's error boundary sits per instruction, not per transaction
+
+`registry.ts` catches a throw from a parser so one broken venue cannot stop the
+others. That was too coarse: a throw inside `#parseNode` unwound past every swap
+already collected for that transaction, so a router batching four fills lost all
+four because the last had a byte out of place. The boundary now sits inside the
+node loop in both parsers, and the failure is counted as `decode_error` rather
+than swallowed.
+
 ### Position accounting names two failures §2 does not
 
 §2 Stage 2 names `unknown_basis` — tokens that arrived by transfer. Two more
