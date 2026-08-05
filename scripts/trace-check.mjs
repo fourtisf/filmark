@@ -59,6 +59,28 @@ if (!response.ok || body === null) {
 const { coverage: c, totals: t } = body;
 const usd = (n) => (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
 const row = (label, value) => stdout.write(`  ${label.padEnd(22)}${value}\n`);
+
+/*
+ * Whether the API answering is the build this script came from.
+ *
+ * A checkout and the process serving it are two different things, and `git
+ * pull` moving one of them is not the same as a restart moving the other. A
+ * stale service answers every question below with figures that predate the
+ * fields being asked about, and the reading looks like a finding rather than
+ * like an old binary. `coverage` is the contract, so its own shape is the
+ * cheapest honest version marker there is.
+ */
+const EXPECTED_COVERAGE_FIELDS = ['swapsUnpriced', 'priceSeries', 'stoppedOnTimeBudget'];
+const missingFields = EXPECTED_COVERAGE_FIELDS.filter((field) => !(field in (c ?? {})));
+if (missingFields.length > 0) {
+  stdout.write(
+    `\n  ! The API answering ${base} predates this script.\n` +
+      `    Its coverage block has no ${missingFields.join(', ')}, so it is running a build\n` +
+      `    from before those were added. Everything below is that older build's reading.\n` +
+      `    Rebuild and restart the service before trusting it:\n` +
+      `      pnpm install && pnpm run build && pm2 restart fillmark-api --update-env\n`,
+  );
+}
 // The response is unvalidated JSON, so every count is coerced rather than trusted.
 const census = Object.entries(c.swapCensus ?? {});
 const sideTotal = (suffix) => {
@@ -112,8 +134,30 @@ const VERDICTS = {
         `That is the signature of a bot: the venue names the bot's account as the trader, not the signer.`
       : `Nothing on ${c.venues.join(' or ')} in ${c.lookbackDays} days. Trades on any other venue are\n` +
         `invisible to this build — a gap in coverage, not a finding about the wallet.`,
-  no_losses: () =>
-    `${t.positionsClosed} closed positions, none realising a loss we can stand behind.`,
+  /*
+   * `no_losses` is the one verdict that can be arrived at rather than measured.
+   * A position is only attributable with a complete basis, so anything excluded
+   * as `unpriced` or `unknown_basis` was dropped before the loss test ran — and
+   * when that is most of them, "none realising a loss" describes the exclusions,
+   * not the wallet. A newer API returns `unpriced_history` for the extreme case;
+   * this covers the partial one, and an older API that has no such status.
+   */
+  no_losses: () => {
+    const dropped = Object.entries(c.excluded ?? {}).filter(([reason]) => reason !== 'not_a_loss');
+    const lost = dropped.reduce((total, [, count]) => total + Number(count), 0);
+    if (lost === 0 || t.positionsClosed === 0) {
+      return `${t.positionsClosed} closed positions, none realising a loss we can stand behind.`;
+    }
+    return (
+      `${t.positionsClosed} closed positions, but ${lost} were dropped before the loss test ran\n` +
+      `(${dropped.map(([reason, count]) => `${reason} ${count}`).join(', ')}). "No losses" here\n` +
+      `describes what was excluded, not what the wallet did.\n` +
+      (Number(c.excluded?.unpriced ?? 0) > 0
+        ? `  unpriced means the SOL/USD feed, not the wallet — check the API host can reach\n` +
+          `  PYTH_BENCHMARKS_URL, then retry.`
+        : `  unknown_basis means more was sold than was read as bought — see the census above.`)
+    );
+  },
   unreadable_history: () =>
     `${sells} sells and ${buys} buys. A wallet cannot sell what it never bought, so the read lost\n` +
     `the entry legs. ${c.foreignSwaps} swaps here were executed by another wallet — if that is large,\n` +
