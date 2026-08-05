@@ -12,8 +12,41 @@
  * it was and what to do about it.
  */
 import { argv, exit, stderr, stdout } from 'node:process';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/**
+ * A GET that will wait as long as the trace takes.
+ *
+ * Not `fetch`: Node's gives up if response headers have not arrived within five
+ * minutes, and a trace is allowed to run for as long as `API_TRACE_TIMEOUT_MS`
+ * says — which an operator widens precisely when a wallet is deep enough to
+ * need it. The client would then abort a request the server was still working
+ * on and report it as "could not reach the API", which is the one thing this
+ * script exists not to do: invent a fault in the half of the system that was
+ * fine. The server's own timeout is the bound here, deliberately.
+ */
+function get(target) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(target);
+    const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const req = send(url, { headers: { accept: 'application/json' } }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        body += chunk;
+      });
+      res.on('end', () => {
+        resolve({ status: res.statusCode ?? 0, ok: (res.statusCode ?? 0) < 400, body });
+      });
+    });
+    req.setTimeout(0);
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 const args = argv.slice(2);
 const urlFlag = args.indexOf('--url');
@@ -41,14 +74,31 @@ if (!BASE58.test(wallet)) {
 const started = Date.now();
 let response;
 try {
-  response = await fetch(`${base}/v1/trace/${wallet}`, { headers: { accept: 'application/json' } });
+  response = await get(`${base}/v1/trace/${wallet}`);
 } catch (error) {
   stderr.write(`could not reach ${base} — is the API running? (${String(error)})\n`);
   exit(1);
 }
 
-const body = await response.json().catch(() => null);
+let body = null;
+try {
+  body = JSON.parse(response.body);
+} catch {
+  body = null;
+}
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
+
+// A reply that is not JSON did not come from the trace API. Something in front
+// of it answered instead, and saying "the trace failed" would send the reader
+// looking in the wrong place entirely.
+if (body === null && response.body !== '') {
+  stderr.write(
+    `HTTP ${response.status} after ${seconds}s, and the reply was not JSON — so it did not\n` +
+      `come from the trace API. A proxy, CDN or host error page answered in its place:\n\n` +
+      `${response.body.slice(0, 300)}\n`,
+  );
+  exit(1);
+}
 
 if (!response.ok || body === null) {
   stderr.write(`HTTP ${response.status} after ${seconds}s\n`);
