@@ -2,34 +2,87 @@
 
 Solana counterparty forensics. Live at [fillmark.xyz](https://fillmark.xyz). The spec is [`docs/exitliquidity-handoff.md`](docs/exitliquidity-handoff.md); read it before this file.
 
-**This repository is at P0: swap ingest.** Pump.fun bonding curve and PumpSwap
-swaps are streamed, backfilled and normalised into the `swaps` table from §5.
-Nothing downstream of that exists yet — no position accounting, no attribution,
-and no application beyond the static design prototypes in `docs/design/`. P1 is
-a hard gate and has not been started.
+**Two things run here.** The indexing pipeline is at P0: Pump.fun bonding curve
+and PumpSwap swaps are streamed, backfilled and normalised into the `swaps`
+table from §5. Alongside it, `apps/api` answers one wallet at a time by reading
+the chain live — position accounting, window netting and attribution over a
+scan it performs on request, with no index in front of it. That is what the
+console at `/app/` calls when you paste an address.
+
+The two share every stage below Stage 1. The pipeline is still what P1 onwards
+is built on; the live path is what makes the product answerable today.
 
 ---
 
 ## What is here
 
-| Package               | What it does                                                                                               |
-| --------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `packages/core`       | Types, on-chain constants, config, logging, metrics, raw-unit arithmetic                                   |
-| `packages/solana`     | Provider-neutral transaction normalisation, instruction tree, Anchor CPI event extraction, JSON-RPC client |
-| `packages/parsers`    | Pump.fun and PumpSwap swap parsers, plus byte-exact transaction fixtures                                   |
-| `packages/clickhouse` | Migrations, client, and the swap/checkpoint/price/mint repositories                                        |
-| `packages/pricing`    | Pyth SOL/USD minute series and the quote-leg oracle                                                        |
-| `apps/ingest`         | Yellowstone consumer, BullMQ backfill worker, normalisation pipeline, CLI                                  |
+| Package                | What it does                                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `packages/core`        | Types, on-chain constants, config, logging, metrics, raw-unit arithmetic                                   |
+| `packages/solana`      | Provider-neutral transaction normalisation, instruction tree, Anchor CPI event extraction, JSON-RPC client |
+| `packages/parsers`     | Pump.fun and PumpSwap swap parsers, plus byte-exact transaction fixtures                                   |
+| `packages/clickhouse`  | Migrations, client, and the swap/checkpoint/price/mint repositories                                        |
+| `packages/pricing`     | Pyth SOL/USD minute series and the quote-leg oracle                                                        |
+| `packages/positions`   | FIFO lots, realised PnL and basis quality — §2 Stage 2                                                     |
+| `packages/attribution` | Window netting and loss allocation — §2 Stages 3 and 4                                                     |
+| `apps/ingest`          | Yellowstone consumer, BullMQ backfill worker, normalisation pipeline, CLI                                  |
+| `apps/api`             | The trace API the console calls: live wallet scan, positions, attribution                                  |
 
 Both ingest paths — the live stream and the RPC backfill — run through the same
 `SwapPipeline` and the same `SwapWriter`. That is deliberate: the seam between
 two differently-wired paths is exactly where a count discrepancy would hide.
 
+## The trace API
+
+`apps/api` is what makes the console answer. It holds the RPC credential, and it
+is the only thing that does — the site is static files, so a key placed there
+would be handed to every visitor.
+
+```bash
+cp .env.example .env         # set SOLANA_RPC_URL and API_CORS_ORIGINS
+pnpm --filter @exitliquidity/api run dev     # or `run start` against dist/
+curl localhost:8080/v1/trace/<WALLET> | jq .totals
+```
+
+| Route                   | What it is                                        |
+| ----------------------- | ------------------------------------------------- |
+| `GET /v1/trace/:wallet` | The trace, as JSON. Everything below happens here |
+| `GET /healthz`          | Liveness                                          |
+| `GET /readyz`           | Readiness                                         |
+| `GET /metrics`          | Prometheus, including RPC calls spent             |
+
+One request runs the whole spec in order:
+
+1. **Scan** — `getSignaturesForAddress` back over `TRACE_LOOKBACK_DAYS`, then
+   the transactions, through the same venue parsers the stream uses.
+2. **Price** — Pyth SOL/USD minutes, cached across traces. Never off the pool.
+3. **Positions** (§2 Stage 2) — FIFO lots per `(wallet, mint)`, realised PnL,
+   and `unknown_basis` where more was sold than was ever bought.
+4. **Windows** (Stage 3) — for each losing buy leg, the pool's own history is
+   crawled around it and expanded by volume until it matches the buy.
+5. **Allocation** (Stage 4) — the realised loss, split by window share.
+
+**Every limit is in the response.** `coverage` carries the lookback, the venues
+read, what was truncated and which pools could not be crawled far enough;
+`totals.unattributedUsd` carries loss that no window explained. None of it is
+folded into the headline figure, and the console prints all of it under the
+number. That is §7.2 and §7.4, not decoration — see `TRACE_*` in `.env.example`
+for the budgets that produce it.
+
+### Cost
+
+A trace is hundreds of RPC calls and is billed as such. `SOLANA_RPC_MAX_RPS`
+bounds the rate, `API_MAX_CONCURRENT_TRACES` bounds how many run at once, and
+`API_CACHE_TTL_SEC` means a shared link is crawled once rather than once per
+visitor. The `fillmark_api_rpc_*` counters are what the bill actually looks
+like.
+
 ## Design prototypes
 
 Static, in `docs/design/`. Open them straight from the filesystem — they have no
-build step and no backend. All four share one palette, one type system and one
-accent colour, taken from the landing page, which §3 makes the source of truth.
+build step and no backend of their own. All four share one palette, one type
+system and one accent colour, taken from the landing page, which §3 makes the
+source of truth.
 
 | File                        | Route          | What it is                                                |
 | --------------------------- | -------------- | --------------------------------------------------------- |
@@ -55,12 +108,27 @@ renders against is [`docs/url-scheme.md`](docs/url-scheme.md).
 node scripts/build-logo-options.mjs   # render the mark candidates
 node scripts/set-logo.mjs d           # apply one everywhere, including the favicon
 node scripts/build-og-images.mjs      # regenerate the three link-preview cards
-node scripts/build-site.mjs           # assemble dist/
+
+FILLMARK_API_URL=https://api.fillmark.xyz node scripts/build-site.mjs
 ```
 
 `dist/` is a plain static site — no build step, no server config. Its directory
 layout is what produces clean URLs on any Apache or nginx host; upload the
 contents into `public_html/` and every route above resolves.
+
+`FILLMARK_API_URL` is the one value connecting the static site to the engine. It
+is written into `<meta name="fillmark:api">` in `/app/`, and the deployed API
+must list the site's origin in `API_CORS_ORIGINS` or the browser will refuse the
+call. Build without it and the console ships with no engine — which it says on
+every surface rather than falling back to the demo figures.
+
+Two things follow from that, and both are deliberate:
+
+- The console never holds a key. It calls one URL; the credential stays server-side.
+- With an engine configured, only the **Trace** tab carries real data. The other
+  five are still drawn, and the page's banner now says which is which per tab
+  rather than declaring the whole console fake. §7.4 takes the labels off only
+  where something real is behind them.
 
 The marks live in `scripts/logo-marks.mjs` and nowhere else, so changing the
 identity is one word on the `set-logo` line.
@@ -69,8 +137,9 @@ The index and lead-time pages are the two surfaces §1 calls the acquisition
 core — the only ones a first-time visitor can read without pasting anything —
 and they are what P3 server-renders first.
 
-Every figure in all four is demo data and labelled as such. Rule §7.4: those
-labels come off only when real data is behind them.
+Every figure in all four is demo data and labelled as such, with one exception:
+the console's Trace tab, once `FILLMARK_API_URL` is set. Rule §7.4 — those
+labels come off exactly where real data is behind them, and nowhere else.
 
 ## Getting started
 
@@ -186,7 +255,7 @@ enough to check a token that has migrated from the bonding curve to the AMM.
 
 ```bash
 pnpm check          # format, lint, typecheck, test
-pnpm test           # 231 unit tests, no infrastructure required
+pnpm test           # 301 unit tests, no infrastructure required
 pnpm build          # tsc -b across the workspace
 ```
 

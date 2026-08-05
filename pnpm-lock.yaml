@@ -33,6 +33,30 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.5)
 
+  apps/api:
+    dependencies:
+      '@exitliquidity/attribution':
+        specifier: workspace:*
+        version: link:../../packages/attribution
+      '@exitliquidity/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@exitliquidity/parsers':
+        specifier: workspace:*
+        version: link:../../packages/parsers
+      '@exitliquidity/positions':
+        specifier: workspace:*
+        version: link:../../packages/positions
+      '@exitliquidity/pricing':
+        specifier: workspace:*
+        version: link:../../packages/pricing
+      '@exitliquidity/solana':
+        specifier: workspace:*
+        version: link:../../packages/solana
+      bs58:
+        specifier: ^6.0.0
+        version: 6.0.0
+
   apps/ingest:
     dependencies:
       '@clickhouse/client':
@@ -68,6 +92,15 @@ importers:
       ioredis:
         specifier: ^5.9.0
         version: 5.11.1
+
+  packages/attribution:
+    dependencies:
+      '@exitliquidity/core':
+        specifier: workspace:*
+        version: link:../core
+      '@exitliquidity/positions':
+        specifier: workspace:*
+        version: link:../positions
 
   packages/clickhouse:
     dependencies:
@@ -105,6 +138,12 @@ importers:
       bs58:
         specifier: ^6.0.0
         version: 6.0.0
+
+  packages/positions:
+    dependencies:
+      '@exitliquidity/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/pricing:
     dependencies:

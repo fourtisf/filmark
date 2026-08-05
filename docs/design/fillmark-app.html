@@ -25,6 +25,11 @@
 
 <link rel="icon" href="/favicon.svg">
 
+<!-- Base URL of the trace API. Empty means there is no engine behind this
+     console, and every surface below says so rather than answering from demo
+     data. `node scripts/build-site.mjs` fills it in from FILLMARK_API_URL. -->
+<meta name="fillmark:api" content="">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -218,6 +223,19 @@ h1 em{font-style:normal;font-weight:300;color:var(--text3)}
 .meta div:last-child{border-right:none}
 .meta b{display:block;font-family:var(--mono);font-size:13px;font-weight:400;margin-top:9px}
 
+/* coverage — the limits that travel with every figure above.
+   1px-gap grid over a --ln background: the gap is the border, so the run of
+   cells stays even whatever the count. */
+.cov-g{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line);margin-top:26px}
+.cov-g div{padding:20px 18px;background:var(--void)}
+.cov-g b{display:block;font-family:var(--mono);font-size:13px;font-weight:400;margin-top:9px;
+  word-break:break-word}
+.cov-n{list-style:none;margin-top:26px;border-top:1px solid var(--line)}
+.cov-n li{padding:16px 8px;border-bottom:1px solid var(--line);color:var(--text2);
+  font-weight:300;font-size:14px;display:flex;gap:14px}
+.cov-n li::before{content:"—";color:var(--text4);flex:none}
+
 /* traits */
 .traits{list-style:none;margin-top:34px;border-top:1px solid var(--line)}
 .traits li{padding:18px 8px;border-bottom:1px solid var(--line);display:flex;gap:20px;
@@ -280,7 +298,7 @@ footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
   /* The rail below already carries in-app navigation; two rows of links in a
      62px bar just pushes the active wallet off screen. */
   .top-l{display:none}
-  .sum,.meta{grid-template-columns:1fr 1fr}
+  .sum,.meta,.cov-g{grid-template-columns:1fr 1fr}
   .st:nth-child(2n),.meta div:nth-child(2n){border-right:none}
   .meth{grid-template-columns:1fr;gap:22px}
   .card-stage{grid-template-columns:1fr;gap:26px}
@@ -339,7 +357,7 @@ footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
 
 <div class="w">
 
-<div class="proto" role="note">
+<div class="proto" role="note" id="proto">
   <b>Prototype — nothing here is real.</b> Every figure on every tab is fabricated
   for layout. No Solana data is being ingested yet, so no address you paste can
   return a genuine result, and this page will say so rather than show you one.
@@ -384,6 +402,10 @@ footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
     <div class="sec"><div class="sec-k">02 — The ledger</div><h2>Who is holding it</h2>
       <p class="note">Hover a row to isolate it in the flow. Open a row for every window it came from, or pin it to your watchlist.</p>
       <div class="led" id="led"></div></div>
+    <div class="sec" id="cov-sec" hidden><div class="sec-k">03 — What this read</div>
+      <h2>Where the number came from</h2>
+      <p class="note">A figure without its limits is a claim. These are this trace's.</p>
+      <div id="cov"></div></div>
   </div>
 </section>
 
@@ -505,7 +527,7 @@ footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
   </div>
 </section>
 
-<footer><span>Fillmark — prototype</span><span>All figures shown are demo data</span></footer>
+<footer><span>Fillmark</span><span id="foot-note">All figures shown are demo data</span></footer>
 </div>
 
 <script>
@@ -571,8 +593,77 @@ const FEED=[
 
 /* ── helpers ──────────────────────────── */
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const usd=n=>"$"+Math.round(n).toLocaleString("en-US");
+const usd=n=>"$"+Math.round(Math.abs(n)).toLocaleString("en-US");
+/* The sign goes in front of the dollar sign, not between it and the digits.
+   `$-7,200` reads as a typo; realised PnL is the one figure here that is
+   routinely negative and routinely positive, so it needs both forms. */
+const signedUsd=n=>(Math.round(n)<0?"−":"")+usd(n);
 let M=null, ACTIVE=null, PINNED=new Set([0,1,2]);
+
+/* ── the engine, if there is one ──────── */
+
+/* The console is a static file. It holds no key and talks to no chain: the
+   scan runs in apps/api, which is where the RPC credential lives and stays.
+   With no API configured this page has nothing behind it, and every surface
+   below says so rather than answering from the demo data further up. */
+const API=(()=>{
+  const meta=(document.querySelector('meta[name="fillmark:api"]')?.content||"").trim();
+  // ?api= is for running the console against a local server. Restricted to
+  // loopback, because on a live origin it would let a link point the paste box
+  // at somebody else's collector — with a wallet address already in it.
+  const local=/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  const override=local?new URLSearchParams(location.search).get("api"):null;
+  return (override||meta).replace(/\/+$/,"");
+})();
+const LIVE=API!=="";
+
+/* Token symbols reach this page from on-chain metadata, which is to say from
+   whoever deployed the token. They are rendered into SVG labels and into ledger
+   rows, so nothing goes into markup unescaped — not even after the API has
+   already stripped the delimiters at its end. */
+const esc=s=>String(s).replace(/[&<>"']/g,c=>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+const short=a=>a.length<=12?a:a.slice(0,4)+"…"+a.slice(-4);
+const when=ts=>new Date(ts*1000).toLocaleString("en-GB",
+  {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",timeZone:"UTC"})+" UTC";
+const plural=(n,one,many)=>n===1?one:many;
+
+/* The report shape from /v1/trace, reshaped into what the flow diagram and the
+   ledger already read. Both were written against the demo model, and both are
+   correct; the adapter is smaller than either, and keeping it means the live
+   path renders through exactly the code the design was reviewed on. */
+function fromReport(r){
+  const preds=r.counterparties.map((c,i)=>({
+    a:short(c.wallet),
+    full:c.wallet,
+    tag:`${c.overlapCount} ${plural(c.overlapCount,"window","windows")} · `
+      +`${c.mints.length} ${plural(c.mints.length,"token","tokens")}`,
+    i,v:c.attributedUsd,ls:[]}));
+
+  const links=[];
+  r.counterparties.forEach((c,i)=>{
+    for(const w of c.windows){
+      // §7.2: every attribution ships with its window. The slot range rides in
+      // the ledger's own detail line, so it is on screen rather than on request.
+      const slots=w.startSlot===w.endSlot?w.startSlot:`${w.startSlot}–${w.endSlot}`;
+      links.push({t:w.symbol?"$"+w.symbol:short(w.mint),p:i,v:w.attributedUsd,
+        w:`${when(w.ts)} · slots ${slots}`,mint:w.mint,pool:w.poolId});
+    }
+  });
+
+  const tOrder=[],tMap={};
+  for(const l of links){
+    if(!(l.t in tMap)){tMap[l.t]={n:l.t,v:0,ls:[]};tOrder.push(tMap[l.t])}
+    tMap[l.t].v+=l.v;tMap[l.t].ls.push(l);preds[l.p].ls.push(l);
+  }
+  tOrder.sort((a,b)=>b.v-a.v);
+
+  return {d:{short:short(r.wallet),addr:r.wallet,closed:r.totals.positionsClosed,
+             span:r.coverage.fromTs?"since "+when(r.coverage.fromTs).slice(0,6):"live scan"},
+          tOrder,preds,ranked:[...preds].sort((a,b)=>b.v-a.v),
+          net:r.totals.attributedUsd,report:r};
+}
 
 /* Free tier: three traces a day (spec §9). Past that the ledger still renders
    its counts, totals and top row — the addresses below are what's held back,
@@ -624,16 +715,16 @@ function sankey(m){
   });
   s+=rb.join("");
   m.tOrder.forEach(t=>{s+=`<rect x="${xL}" y="${t.y0}" width="${bw}" height="${t.h}" fill="var(--ext2)"/>
-    <text class="sl" x="${xL-16}" y="${t.y0+t.h/2-2}" text-anchor="end">${t.n}</text>
+    <text class="sl" x="${xL-16}" y="${t.y0+t.h/2-2}" text-anchor="end">${esc(t.n)}</text>
     <text class="sv" x="${xL-16}" y="${t.y0+t.h/2+13}" text-anchor="end">−${usd(t.v)}</text>`});
   m.ranked.forEach(p=>{s+=`<rect x="${xR}" y="${p.y0}" width="${bw}" height="${p.h}" fill="var(--gold)"/>
-    <text class="sl" x="${xR+18}" y="${p.y0+p.h/2-2}">${p.a}</text>
+    <text class="sl" x="${xR+18}" y="${p.y0+p.h/2-2}">${esc(p.a)}</text>
     <text class="sv" x="${xR+18}" y="${p.y0+p.h/2+13}">${usd(p.v)}</text>`});
   sk.innerHTML=s;
   $("#fm").innerHTML=m.tOrder.map(t=>`<div class="fm-r">
-    <div class="fm-h"><span class="fm-t">${t.n}</span><span class="fm-v">−${usd(t.v)}</span></div>
+    <div class="fm-h"><span class="fm-t">${esc(t.n)}</span><span class="fm-v">−${usd(t.v)}</span></div>
     <div class="fm-b">${t.ls.map(l=>`<i style="flex:${l.v};background:var(--ext);opacity:${(.35+.55*(l.v/t.v)).toFixed(2)}"></i>`).join("")}</div>
-    <div class="fm-l">${t.ls.map(l=>`<span>${m.preds[l.p].a} · ${usd(l.v)}</span>`).join("")}</div>
+    <div class="fm-l">${t.ls.map(l=>`<span>${esc(m.preds[l.p].a)} · ${usd(l.v)}</span>`).join("")}</div>
   </div>`).join("");
 }
 
@@ -644,18 +735,18 @@ function ledger(m){
   $("#led").innerHTML=rows.map((p,i)=>`
    <button class="row" data-p="${p.i}" data-d="d${i}" aria-expanded="false">
      <span class="rk">${String(i+1).padStart(2,"0")}</span>
-     <span class="who">${p.a}<small>${p.tag}</small></span>
+     <span class="who">${esc(p.a)}<small>${esc(p.tag)}</small></span>
      <span class="ov">${p.ls.length} overlap${p.ls.length>1?"s":""}</span>
      <span class="amt">${usd(p.v)}</span><span class="car">›</span></button>
    <div class="det" id="d${i}"><div>
      <ul>${[...p.ls].sort((a,b)=>b.v-a.v).map(l=>
-       `<li><span>${l.t} · ${l.w}</span><b>${usd(l.v)}</b></li>`).join("")}</ul>
+       `<li><span>${esc(l.t)} · ${esc(l.w)}</span><b>${usd(l.v)}</b></li>`).join("")}</ul>
      <div class="act"><button data-pin="${p.i}">Pin to watchlist</button></div>
    </div></div>`).join("")
   + (hidden===0?"":m.ranked.slice(1).map((p,i)=>`
    <div class="lock">
      <span class="rk">${String(i+2).padStart(2,"0")}</span>
-     <span class="lock-w" aria-hidden="true">${p.a}</span>
+     <span class="lock-w" aria-hidden="true">${esc(p.a)}</span>
      <span class="lock-a">${usd(p.v)}</span>
    </div>`).join("")
   + `<div class="lock-n">
@@ -688,57 +779,175 @@ let busy=false;
 const BASE58=/^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const lookup=v=>Object.keys(DATA).find(k=>DATA[k].addr===v);
 
+const setState=html=>{$("#state").innerHTML=html};
+function clearOut(){
+  $("#out").hidden=true;$("#out").classList.remove("in");$("#nodata").hidden=true;
+}
+
+/* An empty state that answers about the address it was handed and nothing else.
+   The address goes in as text, never as markup: it arrives from a paste box and
+   from the query string, and neither is a place to trust. */
+function nothing(kick,head,body,addr){
+  clearOut();
+  const box=$("#nodata");
+  box.innerHTML=`<div class="empty" style="max-width:780px">
+    <div class="sec-k">${kick}</div>
+    <h2 style="margin-top:12px;font-size:26px">${head}</h2>
+    ${addr?'<p><code class="nd-a" id="nd-a"></code></p>':""}
+    ${body}</div>`;
+  if(addr)box.querySelector("#nd-a").textContent=addr;
+  box.hidden=false;
+}
+
 /* An address nobody has data for used to fall through to the first demo wallet,
    which meant a real address came back with someone else's numbers under a
    "trace complete" banner. Spec §7.4: no fabricated figures, and certainly not
    ones presented as an answer to a specific question. Say nothing instead. */
 function noIndex(v){
-  $("#out").hidden=true;$("#out").classList.remove("in");
-  $("#state").innerHTML="No trace · <i>this address is not in the prototype</i>";
-  const box=$("#nodata");
-  box.innerHTML=`<div class="empty">
-    <div class="sec-k">Not indexed</div>
-    <h2 style="margin-top:12px;font-size:26px">There is nothing behind this yet.</h2>
-    <p><code class="nd-a" id="nd-a"></code></p>
-    <p style="margin-top:16px">That wallet may well have closed positions on Solana.
-    This build cannot see them — no ingest is running, so there is no index to ask.</p>
-    <p style="margin-top:14px">It could have shown you numbers. They would have belonged
-    to a different wallet. The two addresses under the box are the only ones carrying
-    figures here, and those figures are drawn for layout, not measured.</p></div>`;
-  box.querySelector("#nd-a").textContent=v;
-  box.hidden=false;
+  setState("No trace · <i>this console has no engine behind it</i>");
+  nothing("Not connected","There is nothing behind this yet.",
+    `<p style="margin-top:16px">That wallet may well have closed positions on Solana.
+     This build cannot see them: no trace API is configured for this page, so there
+     is nothing to ask.</p>
+     <p style="margin-top:14px">It could have shown you numbers. They would have
+     belonged to a different wallet. The two addresses under the box are the only
+     ones carrying figures here, and those figures are drawn for layout, not
+     measured.</p>`,v);
 }
 
 function trace(key){
   if(busy)return;
-  if(!key){const v=$("#addr").value.trim();
-    if(!v){$("#state").textContent="Paste a wallet address first";$("#addr").focus();return}
-    if(!BASE58.test(v)){
-      $("#state").textContent="That is not a Solana address";
-      $("#nodata").hidden=true;$("#out").hidden=true;return}
-    key=lookup(v);
-    if(!key){noIndex(v);return}}
-  $("#nodata").hidden=true;
-  busy=true;$("#go").disabled=true;$("#out").classList.remove("in");
-  $("#state").innerHTML="Netting pool windows… <i>reading closed positions</i>";
+  const v=key?DATA[key].addr:$("#addr").value.trim();
+  if(!v){setState("Paste a wallet address first");$("#addr").focus();return}
+  if(!BASE58.test(v)){setState("That is not a Solana address");clearOut();return}
+
+  if(LIVE){void traceLive(v);return}
+  const demo=key??lookup(v);
+  if(!demo){noIndex(v);return}
+  traceDemo(demo);
+}
+
+/* Drawn figures, and only for the two addresses that carry them. Unreachable
+   the moment an API is configured. */
+function traceDemo(key){
+  clearOut();
+  busy=true;$("#go").disabled=true;
+  setState("Netting pool windows… <i>reading closed positions</i>");
   setTimeout(()=>{
-    const d=DATA[key];M=build(d);ACTIVE=key;
-    TRACES+=1;renderQuota();
-    $("#active").textContent=d.short;
-    sankey(M);ledger(M);
-    $("#s1").textContent=d.span;
-    $("#s2").textContent=M.tOrder.length+" closed in the red";
-    $("#s3").textContent=M.ranked[0].a;
-    $("#out").hidden=false;
-    const vals=[M.net,d.closed,M.ranked.length,M.ranked[0].v];
-    $$("#out .st-v[data-n]").forEach((el,i)=>count(el,vals[i]));
-    requestAnimationFrame(()=>$("#out").classList.add("in"));
-    $("#state").innerHTML=gated()
-      ? "Trace complete · <i>counterparty addresses hidden — free limit reached</i>"
-      : "Trace complete · <i>"+d.closed+" positions read</i>";
-    PINNED=new Set(M.ranked.slice(0,3).map(p=>p.i));
-    unlock();busy=false;$("#go").disabled=false;
+    const d=DATA[key];ACTIVE=key;
+    paint(build(d),d.closed+" positions read");
+    busy=false;$("#go").disabled=false;
   },820);
+}
+
+/* The real thing. The scan itself runs in apps/api — hundreds of RPC calls
+   deep — so this can take a while on a wallet with a long history, and the
+   status line says so instead of looking hung. */
+async function traceLive(v){
+  clearOut();
+  busy=true;$("#go").disabled=true;
+  setState("Reading closed positions… <i>a busy wallet can take a minute</i>");
+  try{
+    const res=await fetch(`${API}/v1/trace/${encodeURIComponent(v)}`,
+      {headers:{accept:"application/json"}});
+    const body=await res.json().catch(()=>null);
+    if(!res.ok){apiError(res.status,body,v);return}
+    renderReport(body);
+  }catch{
+    setState("Trace failed · <i>the engine did not answer</i>");
+    nothing("Unreachable","The trace engine did not answer.",
+      `<p style="margin-top:16px">The console reached for it and got nothing back. It may
+       be restarting, or this browser may not be on its allowed origins. Nothing is shown
+       rather than something guessed.</p>`,v);
+  }finally{busy=false;$("#go").disabled=false}
+}
+
+function apiError(status,body,v){
+  const msg=body&&typeof body.message==="string"?body.message:"the trace could not be completed";
+  setState(`Trace failed · <i>${esc(msg)}</i>`);
+  const heads={400:"That is not a Solana address.",502:"The Solana endpoint did not answer.",
+    503:"The engine is busy right now.",504:"That wallet took longer to read than a trace allows."};
+  nothing("No result",heads[status]??"The trace could not be completed.",
+    `<p style="margin-top:16px">${esc(msg)}. Nothing is shown rather than something
+     guessed.</p>`,v);
+}
+
+/* Four outcomes, four different things to say. A wallet with no trades and a
+   wallet whose counterparties were all filtered out are not the same finding,
+   and collapsing them into one empty state tells the reader neither. */
+const NO_RESULT={
+  no_swaps:["No trades on a venue this build can read.",r=>
+    `<p style="margin-top:16px">Nothing from this wallet on ${esc(r.coverage.venues.join(" or "))}
+     in the last ${r.coverage.lookbackDays} days. Trades anywhere else are invisible to this
+     build — a gap in coverage, not a finding about the wallet.</p>`],
+  no_losses:["Nothing closed in the red.",r=>
+    `<p style="margin-top:16px">${r.totals.positionsClosed}
+     ${plural(r.totals.positionsClosed,"position was","positions were")} closed and read, and none
+     realised a loss against a cost basis this build can stand behind. Open positions are excluded
+     on purpose: an unrealised loss has not paid anyone yet.</p>`],
+  no_attribution:["Losses found. Nobody to attribute them to.",()=>
+    `<p style="margin-top:16px">Every wallet selling into those windows was filtered out — the
+     trader itself, a bot round-tripping inventory, or a trade nothing could price. Nothing is
+     attributed rather than something invented.</p>`],
+};
+
+function renderReport(r){
+  ACTIVE=r.wallet;
+  const outcome=NO_RESULT[r.status];
+  if(outcome){
+    setState(`No counterparties · <i>${esc(r.status.replace(/_/g," "))}</i>`);
+    nothing("No counterparties",outcome[0],outcome[1](r)+coverageHtml(r),r.wallet);
+    $("#cov-sec").hidden=true;
+    return;
+  }
+  const m=fromReport(r);
+  paint(m,`${r.coverage.transactionsFetched.toLocaleString("en-US")} transactions read`);
+}
+
+/* One render path for both. The flow diagram and the ledger were reviewed
+   against the demo model; live data arrives in the same shape rather than
+   through a second copy of the drawing code. */
+function paint(m,note){
+  M=m;
+  if(M.ranked.length===0){setState("Trace complete · <i>no counterparties</i>");return}
+  TRACES+=1;renderQuota();
+  $("#active").textContent=m.d.short;
+  sankey(M);ledger(M);
+  $("#s1").textContent=m.d.span;
+  $("#s2").textContent=`${m.tOrder.length} ${plural(m.tOrder.length,"token","tokens")} in the red`;
+  $("#s3").textContent=M.ranked[0].a;
+  $("#out").hidden=false;
+  const vals=[M.net,m.d.closed,M.ranked.length,M.ranked[0].v];
+  $$("#out .st-v[data-n]").forEach((el,i)=>count(el,vals[i]));
+  requestAnimationFrame(()=>$("#out").classList.add("in"));
+  setState(gated()
+    ? "Trace complete · <i>counterparty addresses hidden — free limit reached</i>"
+    : "Trace complete · <i>"+esc(note)+"</i>");
+  PINNED=new Set(M.ranked.slice(0,3).map(p=>p.i));
+
+  if(m.report){$("#cov").innerHTML=coverageHtml(m.report);$("#cov-sec").hidden=false}
+  else $("#cov-sec").hidden=true;
+  unlock();
+}
+
+/* Spec §7.1 and §7.2. Every figure above is bounded by something — a lookback,
+   a venue list, a budget that ran out — and the bounds belong on the page with
+   the figure, not in a footnote somebody has to go and find. */
+function coverageHtml(r){
+  const c=r.coverage,t=r.totals;
+  const facts=[
+    ["Window",`${c.lookbackDays} day lookback`],
+    ["Venues read",c.venues.join(", ")],
+    ["Transactions read",c.transactionsFetched.toLocaleString("en-US")],
+    ["Positions attributed",`${c.positionsAttributed} of ${c.losingPositions}`],
+    ["Attributed",usd(t.attributedUsd)],
+    ["Unattributed",usd(t.unattributedUsd)],
+    ["Realised PnL",signedUsd(t.realisedPnlUsd)],
+    ["Scan time",(r.elapsedMs/1000).toFixed(1)+"s"],
+  ];
+  return `<div class="cov-g">${facts.map(f=>
+      `<div><div class="st-l">${esc(f[0])}</div><b>${esc(f[1])}</b></div>`).join("")}</div>`
+    +`<ul class="cov-n">${r.notes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>`;
 }
 
 function unlock(){
@@ -775,7 +984,7 @@ function checkPool(tk){
         hits.map((h,i)=>{const pr=M.ranked.find(x=>x.i===h.p)||M.preds[h.p];return `
           <div class="row" style="cursor:default">
             <span class="rk">${String(i+1).padStart(2,"0")}</span>
-            <span class="who">${pr.a}<small>took ${usd(pr.v)} from you across ${pr.ls.length} window${pr.ls.length>1?"s":""}</small></span>
+            <span class="who">${esc(pr.a)}<small>took ${usd(pr.v)} from you across ${pr.ls.length} window${pr.ls.length>1?"s":""}</small></span>
             <span class="ov">${h.entry}</span><span class="amt">${h.size}</span><span></span>
           </div>`}).join("")}</div>
         <p class="note" style="margin-top:22px">Position sizes are current, not realised. They tell you who is standing in front of you, not what they will do next.</p></div>`:""}`;
@@ -810,7 +1019,7 @@ function openFile(idx){
 function renderWatch(){
   if(!M)return;
   $("#wl").innerHTML=M.ranked.map(p=>`
-    <div class="wl-r"><span class="who">${p.a}<small>${p.tag}</small></span>
+    <div class="wl-r"><span class="who">${esc(p.a)}<small>${esc(p.tag)}</small></span>
       <span class="ov">${usd(p.v)} taken</span>
       <button class="sw" data-w="${p.i}" aria-pressed="${PINNED.has(p.i)}"
         aria-label="Alerts for ${p.a}"></button></div>`).join("");
@@ -833,6 +1042,13 @@ function renderTokLed(){
 /* ── receipt card ─────────────────────── */
 function cardSVG(){
   const top=M.ranked[0];
+  // The corner stamp is the card's own provenance, and it travels further than
+  // any other surface here — §7.1 and §7.4 both land on this one line. A card
+  // built from drawn numbers says so; a measured one says what it measured, and
+  // still does not say "took".
+  const stamp=M.report
+    ? `ATTRIBUTED OVERLAP · ${M.report.coverage.lookbackDays}D`
+    : "DEMO DATA";
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="640" height="640">
 <rect width="640" height="640" fill="#060607"/>
 <rect x="1" y="1" width="638" height="638" fill="none" stroke="#1B1E22"/>
@@ -842,10 +1058,10 @@ function cardSVG(){
 <text x="56" y="330" font-family="Archivo,sans-serif" font-size="88" font-weight="300" fill="#E23B2E">${usd(M.net)}</text>
 <line x1="56" y1="382" x2="584" y2="382" stroke="#1B1E22"/>
 <text x="56" y="420" font-family="JetBrains Mono,monospace" font-size="12" letter-spacing="3" fill="#6B727A">LARGEST COUNTERPARTY</text>
-<text x="56" y="458" font-family="JetBrains Mono,monospace" font-size="22" fill="#F5F6F7">${top.a}</text>
-<text x="56" y="488" font-family="Archivo,sans-serif" font-size="15" fill="#A3A9B0">${usd(top.v)} across ${top.ls.length} windows · ${top.tag}</text>
-<text x="56" y="576" font-family="JetBrains Mono,monospace" font-size="11" letter-spacing="2" fill="#6B727A">WALLET ${M.d.short} · ${M.d.closed} POSITIONS READ</text>
-<text x="584" y="576" font-family="JetBrains Mono,monospace" font-size="11" letter-spacing="2" fill="#6B727A" text-anchor="end">DEMO DATA</text>
+<text x="56" y="458" font-family="JetBrains Mono,monospace" font-size="22" fill="#F5F6F7">${esc(top.a)}</text>
+<text x="56" y="488" font-family="Archivo,sans-serif" font-size="15" fill="#A3A9B0">${usd(top.v)} across ${top.ls.length} windows · ${esc(top.tag)}</text>
+<text x="56" y="576" font-family="JetBrains Mono,monospace" font-size="11" letter-spacing="2" fill="#6B727A">WALLET ${esc(M.d.short)} · ${M.d.closed} POSITIONS READ</text>
+<text x="584" y="576" font-family="JetBrains Mono,monospace" font-size="11" letter-spacing="2" fill="#6B727A" text-anchor="end">${esc(stamp)}</text>
 </svg>`;
 }
 function renderCard(){ $("#cardbox").innerHTML=cardSVG(); }
@@ -867,10 +1083,35 @@ const VIEWS=["trace","pre","file","watch","token","card"];
 /* Each surface gets a hash, so a link can point at one and the back button
    works. Public pages link straight to #token; without this they landed on
    whichever view happened to be open. */
+/* §7.4 puts the demo labels on and takes them off only when real data is
+   behind them. With an engine configured that is now true of one tab and no
+   others, so the banner has to say which — a single "nothing here is real"
+   across a live trace is as wrong as no label at all. */
+function banner(v){
+  const box=$("#proto");
+  if(!LIVE){
+    box.innerHTML=`<b>Prototype — nothing here is real.</b> Every figure on every tab is
+      fabricated for layout. No trace engine is configured, so no address you paste can
+      return a genuine result, and this page will say so rather than show you one.`;
+    return;
+  }
+  box.innerHTML=v==="trace"
+    ? `<b>Live.</b> This tab reads Solana through the trace API: real swaps, real closed
+       positions, real counterparties, with every figure's limits printed under it. The
+       other tabs are still prototype.`
+    : `<b>Prototype — this tab is not real.</b> Its figures are fabricated for layout.
+       <button class="nv" data-jump="trace" style="padding:0;letter-spacing:0;
+       text-transform:none;font-family:inherit;font-size:inherit;color:var(--text);
+       border-bottom:1px solid currentColor">Trace</button> is the tab with an engine
+       behind it.`;
+  $$("#proto [data-jump]").forEach(b=>b.addEventListener("click",()=>show(b.dataset.jump)));
+}
+
 function show(v,writeHash=true){
   if(!VIEWS.includes(v))v="trace";
   $$(".nv").forEach(b=>b.setAttribute("aria-current",b.dataset.v===v));
   VIEWS.forEach(k=>$("#v-"+k).hidden=(k!==v));
+  banner(v);
   if(writeHash&&location.hash.slice(1)!==v){
     history.pushState(null,"","#"+v);
   }
@@ -880,7 +1121,11 @@ $$(".nv").forEach(b=>b.addEventListener("click",()=>show(b.dataset.v)));
 $$("[data-jump]").forEach(b=>b.addEventListener("click",()=>show(b.dataset.jump)));
 addEventListener("hashchange",()=>show(location.hash.slice(1),false));
 addEventListener("popstate",()=>show(location.hash.slice(1),false));
-$$(".chip[data-w]").forEach(c=>c.addEventListener("click",()=>{
+/* The two "try" addresses are invented, and an invented address run through a
+   real scan comes back empty — which reads as a broken engine rather than as a
+   fabricated example. With one configured they go away. */
+if(LIVE)$(".tries").remove();
+else $$(".chip[data-w]").forEach(c=>c.addEventListener("click",()=>{
   $("#addr").value=DATA[c.dataset.w].addr;trace(c.dataset.w)}));
 $("#go").addEventListener("click",()=>trace());
 $("#addr").addEventListener("keydown",e=>{if(e.key==="Enter")trace()});
@@ -897,13 +1142,21 @@ $("#extgo").addEventListener("click",()=>{
   $("#extout").hidden=true;
   $("#extstate").textContent=v
     ? "No file · this address is not in the prototype"
-    : "Paste an address, or pick one of the three above";});
+    : "Paste an address, or pick one of the two above";});
 renderTokLed();
+
+$("#foot-note").textContent=LIVE
+  ? "Trace reads live Solana data · every other tab is demo data"
+  : "All figures shown are demo data";
 
 /* Arrive on the surface the link asked for, then run any wallet it carried.
    The landing hero posts here with ?wallet=, so the paste box on the front
-   page is one action rather than two. */
-if(location.hash)show(location.hash.slice(1),false);
+   page is one action rather than two.
+
+   `show` unconditionally, hash or not: it is what writes the banner, and a
+   first load with no hash used to leave the prototype notice standing over a
+   live tab. */
+show(location.hash.slice(1)||"trace",false);
 
 const incoming=new URLSearchParams(location.search).get("wallet");
 if(incoming){

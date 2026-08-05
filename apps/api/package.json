@@ -1,0 +1,26 @@
+{
+  "name": "@exitliquidity/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Trace API: on-demand wallet scan over JSON-RPC, positions, attribution.",
+  "main": "./dist/index.js",
+  "bin": {
+    "exitliquidity-api": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly",
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts"
+  },
+  "dependencies": {
+    "@exitliquidity/attribution": "workspace:*",
+    "@exitliquidity/core": "workspace:*",
+    "@exitliquidity/parsers": "workspace:*",
+    "@exitliquidity/positions": "workspace:*",
+    "@exitliquidity/pricing": "workspace:*",
+    "@exitliquidity/solana": "workspace:*",
+    "bs58": "^6.0.0"
+  }
+}

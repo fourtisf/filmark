@@ -263,6 +263,21 @@ export class SolanaRpcClient {
     });
   }
 
+  /**
+   * Any other JSON-RPC method, through the same limiter, timeout and retries.
+   *
+   * The typed methods above are the supported surface and should be preferred.
+   * This exists for the provider extensions that only some endpoints serve —
+   * Helius's DAS calls, for one — where the alternative is a second HTTP path
+   * with its own fetch, its own backoff and its own share of the rate limit.
+   * Two paths to one key is how a shared key gets exhausted.
+   *
+   * The caller owns the response shape; nothing here validates `T`.
+   */
+  async call<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T> {
+    return this.#call<T>(method, params, signal);
+  }
+
   async #call<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T> {
     const id = this.#nextId++;
     return this.#send<T>(

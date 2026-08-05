@@ -31,6 +31,35 @@ const PAGES = [
 
 const ASSETS = ['robots.txt', 'sitemap.xml', 'favicon.svg'];
 
+/**
+ * Where the console sends its traces.
+ *
+ * The uploaded site is static files on a plain host; the scan runs in
+ * `apps/api`, which is where the RPC key lives and where it stays. This is the
+ * one value that connects the two, so it is a build input rather than something
+ * edited into the HTML by hand and forgotten on the next build.
+ *
+ *   FILLMARK_API_URL=https://api.fillmark.xyz node scripts/build-site.mjs
+ *
+ * Left unset, the console ships with no engine and says so on every surface —
+ * which is the correct behaviour, not a broken build.
+ */
+const API_URL = (process.env.FILLMARK_API_URL ?? '').trim().replace(/\/+$/, '');
+if (API_URL !== '') {
+  try {
+    const parsed = new URL(API_URL);
+    if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost') {
+      // A page served over https cannot call an http origin — the browser
+      // blocks it as mixed content, and the console reports it as "the engine
+      // did not answer". Failing here names the real problem.
+      throw new Error('must be https (or localhost for local runs)');
+    }
+  } catch (error) {
+    console.error(`FILLMARK_API_URL is not usable: ${error.message}`);
+    process.exit(1);
+  }
+}
+
 await rm(DIST, { recursive: true, force: true });
 await mkdir(DIST, { recursive: true });
 
@@ -42,8 +71,26 @@ for (const [from, to] of PAGES) {
   }
   const target = `${DIST}/${to}`;
   await mkdir(target.slice(0, target.lastIndexOf('/')), { recursive: true });
-  await writeFile(target, await readFile(source, 'utf8'));
-  console.log(`  ${to}`);
+  await writeFile(target, withApiUrl(await readFile(source, 'utf8'), to));
+  console.log(`  ${to}${to === 'app/index.html' && API_URL !== '' ? `  → ${API_URL}` : ''}`);
+}
+
+/**
+ * Writes the API base URL into the console's meta tag.
+ *
+ * The tag is matched by name rather than by exact text, so reformatting the
+ * page cannot silently stop this from applying and ship a console wired to
+ * nothing.
+ */
+function withApiUrl(html, target) {
+  if (target !== 'app/index.html' || API_URL === '') return html;
+
+  const tag = /<meta\s+name="fillmark:api"\s+content="[^"]*"\s*\/?>/i;
+  if (!tag.test(html)) {
+    console.error('  app/index.html has no <meta name="fillmark:api"> to fill in');
+    process.exit(1);
+  }
+  return html.replace(tag, `<meta name="fillmark:api" content="${API_URL}">`);
 }
 
 for (const asset of ASSETS) {

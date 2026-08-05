@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { AbortedError, AppError, ConfigError, describeError } from '@exitliquidity/core';
+import {
+  AbortedError,
+  AppError,
+  ConfigError,
+  describeError,
+  loadEnvFile,
+} from '@exitliquidity/core';
 import {
   backfill,
   dumpTransaction,
@@ -11,7 +17,6 @@ import {
   verify,
   worker,
 } from './commands.js';
-import { loadEnvFile } from './env.js';
 import { createServices } from './services.js';
 
 const USAGE = `

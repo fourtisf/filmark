@@ -73,6 +73,38 @@ const configSchema = z.object({
   METRICS_PORT: port.default(9464),
   METRICS_ENABLED: booleanish.default(true),
 
+  // ── Trace API ───────────────────────────────────────────────────────────
+  API_HOST: z.string().min(1).default('0.0.0.0'),
+  API_PORT: port.default(8080),
+  /**
+   * Browser origins allowed to call the API, comma separated. `*` allows any.
+   *
+   * Empty by default: the API holds an RPC key, and a service that answers
+   * every origin out of the box is one someone else's page can spend.
+   */
+  API_CORS_ORIGINS: z.string().default(''),
+  /** How long a completed trace is served from memory before it is recomputed. */
+  API_CACHE_TTL_SEC: positiveInt.default(300),
+  /** Cached traces held before the least recently used is dropped. */
+  API_CACHE_MAX_ENTRIES: positiveInt.default(200),
+  /** Traces computed at once. Each one is a long series of RPC calls. */
+  API_MAX_CONCURRENT_TRACES: positiveInt.default(2),
+  /** Upper bound on a single trace, after which it fails rather than hangs. */
+  API_TRACE_TIMEOUT_MS: positiveInt.default(180_000),
+
+  /** How far back a trace reads a wallet's history. Spec §8 assumes 90 days. */
+  TRACE_LOOKBACK_DAYS: positiveInt.default(90),
+  /** Signatures read for the traced wallet before the crawl is cut short. */
+  TRACE_MAX_SIGNATURES: positiveInt.default(6000),
+  /** Losing positions attributed per trace, largest loss first. */
+  TRACE_MAX_POSITIONS: positiveInt.default(12),
+  /** Buy legs attributed per position, largest cost basis first. */
+  TRACE_MAX_LEGS_PER_POSITION: positiveInt.default(6),
+  /** Signature pages crawled per pool while reaching a window. 1000 each. */
+  TRACE_MAX_POOL_SIGNATURE_PAGES: positiveInt.default(40),
+  /** Pool transactions fetched per trace for window netting. */
+  TRACE_MAX_POOL_TRANSACTIONS: positiveInt.default(1500),
+
   /** Drops swaps below this USD size. 0 keeps everything, which is the default. */
   MIN_SWAP_USD: nonNegativeInt.default(0),
 });

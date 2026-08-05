@@ -1,0 +1,26 @@
+{
+  "name": "@exitliquidity/attribution",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Window netting and loss allocation. Spec §2 Stages 3 and 4.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly"
+  },
+  "dependencies": {
+    "@exitliquidity/core": "workspace:*",
+    "@exitliquidity/positions": "workspace:*"
+  }
+}

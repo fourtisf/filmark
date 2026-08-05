@@ -4,10 +4,10 @@ import { dirname, join, resolve } from 'node:path';
 /**
  * Finds a file by walking up from a starting directory.
  *
- * The CLI is launched through `pnpm --filter`, which runs it with the working
- * directory set to `apps/ingest`. A `.env` at the repository root — where
- * `.env.example` sits, and so where anyone following the README puts it — is two
- * levels above anything a relative path would find.
+ * Both apps are launched through `pnpm --filter`, which runs them with the
+ * working directory set to `apps/ingest` or `apps/api`. A `.env` at the
+ * repository root — where `.env.example` sits, and so where anyone following
+ * the README puts it — is two levels above anything a relative path would find.
  */
 function findUp(name: string, from: string): string | null {
   let dir = resolve(from);

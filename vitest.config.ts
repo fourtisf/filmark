@@ -37,6 +37,14 @@ export default defineConfig({
         find: /^@exitliquidity\/pricing$/,
         replacement: source('./packages/pricing/src/index.ts'),
       },
+      {
+        find: /^@exitliquidity\/positions$/,
+        replacement: source('./packages/positions/src/index.ts'),
+      },
+      {
+        find: /^@exitliquidity\/attribution$/,
+        replacement: source('./packages/attribution/src/index.ts'),
+      },
     ],
   },
 });

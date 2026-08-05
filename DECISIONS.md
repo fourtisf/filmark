@@ -131,6 +131,102 @@ acceptance test needs.
 
 ---
 
+## The trace API
+
+### A trace reads the chain on request instead of querying an index
+
+§4 assumes every surface reads aggregates that ingest has already built. That is
+right for the public pages — thousands of them, server-rendered, cached — and it
+is wrong for the one surface people arrive at with an address in the clipboard.
+Indexing enough of Solana to answer an arbitrary wallet is a continuous cost
+paid before anybody asks; answering one wallet is a few hundred RPC calls paid
+only when they do.
+
+So `apps/api` performs the scan itself. Everything below Stage 1 is the same
+code the pipeline will use: the same parsers, the same oracle, the same FIFO
+accounting, the same netting. Only the source of the swaps differs.
+
+This is a genuine departure and it has a cost. A trace takes tens of seconds
+rather than milliseconds, and it cannot answer questions that need the whole
+chain — the extractor index and the lead-time radar still need ingest. It is a
+way to make the console answerable now, not a replacement for §4.
+
+### Every budget has a matching field in the response
+
+A wallet with a million signatures cannot be read inside one HTTP request, and a
+pool filling every block cannot be crawled back three months. Both are bounded
+(`TRACE_MAX_*`), and every bound reports itself: `historyTruncated`,
+`poolsIncomplete`, `legsSkipped`, `positionsAttributed` against
+`losingPositions`.
+
+The alternative — silently returning what fitted — is the §7.4 failure wearing a
+different hat. A partial read presented as a whole one is a fabricated figure
+even though every number in it was measured.
+
+### Unexplained loss is reported, never redistributed
+
+When a buy leg's window yields no eligible counterparty, its share of the loss
+lands in `totals.unattributedUsd`. Spreading it over the counterparties that
+were found would keep the headline figure equal to the realised loss, which
+looks tidier and is a lie: it would inflate specific named wallets by an amount
+nothing measured about them.
+
+### Position accounting names two failures §2 does not
+
+§2 Stage 2 names `unknown_basis` — tokens that arrived by transfer. Two more
+produce the same consequence and are tracked separately so a trace can say which
+happened:
+
+- `unpriced` — a contributing leg had no SOL/USD minute in range.
+- Sells with no lot behind them also cover a wallet that bought on a venue with
+  no parser. Indistinguishable from a transfer here, and excluded either way.
+
+All three are excluded from attribution, as §2 requires of the first.
+
+### The exclusion list ships empty
+
+§2 Stage 3 step 3 excludes CEX hot wallets, routers, aggregator vaults, and the
+buyer's funding cluster. Clustering is §2 Stage 6 and has not been built, and
+seeding a hardcoded list of addresses nobody in this repository has verified
+would be a fabricated exclusion — the same problem as a fabricated figure, one
+step upstream.
+
+What does run: the buyer's own wallet, the net-vs-gross round-trip filter that
+§8 calls the main defence, and anything the caller passes in. LP operations never
+appear because the parsers emit swaps only. `excludedWallets` is the seam the
+cluster work plugs into.
+
+### Net-to-gross is measured in tokens, not dollars
+
+§2 says "net position change", which is a quantity. Computing the ratio from USD
+would make it move with the price inside the window, so a bot that bought and
+sold the same number of tokens across a run-up would read as a distributor.
+
+### `SolanaRpcClient` gained a generic `call`
+
+The client was written to cover "exactly what backfill needs". Token symbols
+come from a provider extension (Helius's DAS) that only some endpoints serve.
+The alternative to opening the transport was a second HTTP path with its own
+retries and its own share of the rate limit, pointed at the same key — which is
+how a shared key gets exhausted. The typed methods remain the supported surface.
+
+Symbols are display only. A symbol is metadata the deployer wrote; it is not
+unique and it is not evidence, which is why every surface showing one shows the
+mint beside it, and why the resolver degrades to mint addresses in silence.
+
+### The console's demo data is now reachable only without an engine
+
+§7.4 says the demo labels come off when real data is behind them. With
+`FILLMARK_API_URL` set that is true of one tab and five drawn ones, so the
+banner reports per tab instead of declaring the whole page fake — a blanket
+"nothing here is real" over a live trace is as wrong as no label at all.
+
+The two "try" addresses are removed when an engine is configured: they are
+invented, and an invented address run through a real scan comes back empty,
+which reads as a broken engine rather than as a fabricated example.
+
+---
+
 ## Pricing
 
 ### Pyth Benchmarks for history, Hermes for live
@@ -215,10 +311,20 @@ generated page has to clear, is in [`docs/url-scheme.md`](docs/url-scheme.md).
 3. **What to do with unpriced rows.** They are written and flagged today. If a
    material share of a token's history lands unpriced, P1 has to decide whether
    to exclude those positions from attribution the way §2 Stage 2 excludes
-   `unknown_basis` positions, or to widen the staleness bound.
+   `unknown_basis` positions, or to widen the staleness bound. The trace API
+   already takes the strict reading and excludes them; that choice should be
+   made once, for both paths.
 
 4. **The raised palette.** See Design above. Zero contrast failures now, but it
    amends §3, which is ALFA's document.
+
+5. **τ and the volume cap have not been calibrated.** §8 asks for tuning against
+   hand-checked cases and budgets real time for it. The defaults shipped are the
+   spec's suggested values — τ = 150 slots, ±10 minutes, 20% net-to-gross — and
+   they are configurable, but nobody has yet held one trace up against a
+   hand-read transaction log. Until that happens the attribution is structurally
+   correct and numerically unvalidated. That is the P2 acceptance criterion, and
+   it is not met.
 
 Also unresolved from §9, and untouched here: pricing, and whether public pages
 carry Fourtis.io cross-links. Neither affects P0.
