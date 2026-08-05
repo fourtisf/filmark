@@ -217,6 +217,91 @@ const BANNERS = {
      .ticks{position:absolute;left:360px;top:248px;line-height:0}
      .kick{margin-left:2px}`,
   ),
+
+  // The wordmark at full width. Nothing to read, so nothing is lost to the
+  // mobile crop; the mark carries the meaning and the type carries the volume.
+  'x-header-d.png': banner(
+    `
+    <div class="stack">
+      <svg class="big-mark" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true">
+        <rect x="2" y="5" width="20" height="2" fill="${G3}"/>
+        <rect x="2" y="11" width="11" height="2" fill="${RD}"/>
+        <rect x="2" y="17" width="20" height="2" fill="${G3}"/>
+      </svg>
+      <div class="huge">FILL<span>MARK</span></div>
+      <div class="rule"></div>
+      <div class="dom">Solana counterparty forensics · fillmark.xyz</div>
+    </div>`,
+    `.stack{position:absolute;inset:0;display:flex;flex-direction:column;
+       align-items:center;justify-content:center;gap:0}
+     .big-mark{width:54px;height:54px;display:block;margin-bottom:22px}
+     .huge{font-size:158px;font-weight:800;letter-spacing:-.055em;line-height:.86;
+       font-variation-settings:'wdth' 112}
+     .huge span{font-weight:200;color:#6E757D}
+     .rule{width:520px;height:1px;background:var(--ln);margin:34px 0 24px}`,
+  ),
+
+  // The two sides of a fill, stated literally. The ribbon is the only thing
+  // between them, which is the product in one image.
+  'x-header-e.png': banner(
+    `
+    <div class="top">
+      <div class="logo"><span>${NAV_MARK}</span><b>FILL<i>MARK</i></b></div>
+      <span class="dom">fillmark.xyz</span>
+    </div>
+    <div class="sides">
+      <div class="side"><div class="lbl">Your exit</div><div class="bar you"></div></div>
+      <svg class="bridge" viewBox="0 0 300 120" aria-hidden="true">
+        <g fill="${RD}">
+          <path opacity=".8" d="M0,14 C120,14 180,4 300,2 L300,26 C180,28 120,44 0,44 Z"/>
+          <path opacity=".52" d="M0,58 C120,58 180,84 300,90 L300,114 C180,108 120,82 0,82 Z"/>
+        </g>
+      </svg>
+      <div class="side right"><div class="lbl">Their entry</div><div class="bar them"></div></div>
+    </div>`,
+    `.top{display:flex;align-items:center;justify-content:space-between}
+     .sides{position:absolute;left:150px;right:150px;top:196px;
+       display:grid;grid-template-columns:1fr 300px 1fr;align-items:center;gap:34px}
+     .lbl{font-family:var(--mono);font-size:14px;letter-spacing:.24em;
+       text-transform:uppercase;color:var(--g3);margin-bottom:16px}
+     .side.right{text-align:right}
+     .bar{height:10px}
+     .bar.you{background:linear-gradient(90deg,rgba(226,59,46,.32),var(--rd))}
+     .bar.them{background:linear-gradient(90deg,rgba(245,246,247,.85),rgba(245,246,247,.14))}
+     .bridge{width:300px;height:120px;display:block}`,
+  ),
+
+  // Ledger rules: the shape of an attribution table without pretending to be
+  // one. No addresses and no amounts — a banner has no room for the caption
+  // that would make invented figures honest, so it carries none.
+  'x-header-f.png': banner(
+    `
+    <div class="top">
+      <div class="logo"><span>${NAV_MARK}</span><b>FILL<i>MARK</i></b></div>
+      <span class="dom">fillmark.xyz</span>
+    </div>
+    <h1>Who was on<br><em>the</em> <u>other side.</u></h1>
+    <div class="rows">
+      ${[100, 76, 58, 41, 29]
+        .map(
+          (w, i) => `
+        <div class="row">
+          <span class="rk">${String(i + 1).padStart(2, '0')}</span>
+          <span class="track"><i style="width:${w}%"></i></span>
+        </div>`,
+        )
+        .join('')}
+    </div>`,
+    `.top{display:flex;align-items:center;justify-content:space-between}
+     h1{margin-top:48px;font-size:62px;max-width:620px}
+     .rows{position:absolute;right:150px;top:150px;width:560px;
+       display:flex;flex-direction:column;gap:1px}
+     .row{display:grid;grid-template-columns:44px 1fr;align-items:center;gap:20px;
+       padding:13px 0;border-bottom:1px solid var(--ln)}
+     .rk{font-family:var(--mono);font-size:13px;color:#464C53}
+     .track{height:8px;background:#111316;display:block}
+     .track i{display:block;height:100%;background:var(--rd);opacity:.82}`,
+  ),
 };
 
 const chromiumDir = readdirSync('/opt/pw-browsers').find((d) => d.startsWith('chromium-'));
