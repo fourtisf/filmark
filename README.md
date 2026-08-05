@@ -112,6 +112,32 @@ worse.
 > trace, which is not JSON and did not come from here; the console names that
 > case separately rather than blaming the engine.
 
+### Restarting it
+
+A trace holds its socket open for as long as its RPC calls take, which is
+minutes, so the service waits up to ten seconds on `SIGTERM` for the ones in
+flight before it lets go. A process manager has to be told to allow that. PM2
+kills 1.6 seconds after the signal by default, well inside a trace, so a deploy
+during one takes it down and the browser that asked for it is told the engine
+did not answer — a phantom fault, produced by the deploy rather than found by
+it. Give it room:
+
+```js
+// ecosystem.config.cjs
+module.exports = {
+  apps: [
+    {
+      name: 'fillmark-api',
+      script: 'apps/api/dist/main.js',
+      kill_timeout: 12000,
+    },
+  ],
+};
+```
+
+The same applies while diagnosing: a restart cancels whatever is running, so let
+a trace finish before deploying over it.
+
 ### Cost
 
 A trace is hundreds of RPC calls and is billed as such. `SOLANA_RPC_MAX_RPS`
