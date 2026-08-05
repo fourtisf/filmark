@@ -101,11 +101,12 @@ describe('SolanaRpcClient batching', () => {
   function batchClient(
     respond: (requests: { id: number; params: unknown[] }[]) => Response,
     batchSize = 20,
+    maxRequestsPerSecond = 1000,
   ): { client: SolanaRpcClient; bodies: () => unknown[][] } {
     const bodies: unknown[][] = [];
     const client = new SolanaRpcClient({
       url: 'https://rpc.invalid',
-      maxRequestsPerSecond: 1000,
+      maxRequestsPerSecond,
       batchSize,
       logger: silentLogger,
       fetchImpl: async (_url, init): Promise<Response> => {
@@ -180,6 +181,54 @@ describe('SolanaRpcClient batching', () => {
 
     await expect(client.getTransactions(['a'])).resolves.toHaveLength(1);
     expect(call).toBe(2);
+  });
+
+  it('overlaps batches instead of waiting out every round trip', async () => {
+    /*
+     * Run end to end, the achieved rate is whichever is slower: the configured
+     * allowance, or one batch per round trip. A ten-wide batch on a
+     * ten-per-second budget has a second to play with, and a call that takes
+     * longer than that spends the difference idle — which is a wallet crawl
+     * running at well under the rate it was configured for.
+     */
+    let inFlight = 0;
+    let peak = 0;
+    const client = new SolanaRpcClient({
+      url: 'https://rpc.invalid',
+      maxRequestsPerSecond: 1000,
+      batchSize: 2,
+      logger: silentLogger,
+      fetchImpl: async (_url, init): Promise<Response> => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inFlight -= 1;
+        const parsed = JSON.parse((init?.body ?? '[]') as string) as {
+          id: number;
+          params: unknown[];
+        }[];
+        return batchOk(parsed);
+      },
+    });
+
+    const signatures = Array.from({ length: 12 }, (_, i) => `sig${i}`);
+    const results = await client.getTransactions(signatures);
+
+    expect(peak).toBeGreaterThan(1); // they overlapped
+    expect(peak).toBeLessThanOrEqual(3); // and stayed inside the cap
+    // Overlap must not disturb the pairing: callers index by position.
+    expect(results.map((r) => r?.transaction.signatures[0])).toEqual(signatures);
+  });
+
+  it('keeps the rate limiter in charge of the rate, not the concurrency', async () => {
+    // Three in flight must not mean three slots at once. Six signatures in
+    // batches of two, at two calls a second, is three batches charged one
+    // second each: slots at 0s, 1s and 2s however far they overlap.
+    const { client } = batchClient((r) => batchOk(r), 2, 2);
+
+    const started = Date.now();
+    await client.getTransactions(['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1900);
   });
 
   it('falls back to one request per signature when batching is off', async () => {

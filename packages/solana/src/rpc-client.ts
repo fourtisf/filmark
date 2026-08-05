@@ -1,6 +1,7 @@
 import {
   RateLimiter,
   chunk,
+  mapWithConcurrency,
   UpstreamError,
   describeError,
   retry,
@@ -8,6 +9,16 @@ import {
   silentLogger,
 } from '@exitliquidity/core';
 import type { RpcTransactionResponse } from './adapters/rpc.js';
+
+/**
+ * Transaction batches in flight at once.
+ *
+ * Not a way to exceed the rate limit — the limiter still hands out one slot at
+ * a time — but a way to actually reach it when a round trip is slower than the
+ * gap between slots. Small, because every one of these is a retry surface and a
+ * provider counts them all against the same allowance.
+ */
+const TRANSACTION_BATCH_CONCURRENCY = 3;
 
 export type Commitment = 'processed' | 'confirmed' | 'finalized';
 
@@ -200,11 +211,30 @@ export class SolanaRpcClient {
       return out;
     }
 
-    const out: (RpcTransactionResponse | null)[] = [];
-    for (const group of chunk([...signatures], this.#batchSize)) {
-      out.push(...(await this.#transactionBatch(group, signal)));
-    }
-    return out;
+    /*
+     * Batches overlap; the limiter still decides the rate.
+     *
+     * Run end to end, batch N+1 does not leave until batch N has come back, so
+     * the achieved rate is whichever is *slower*: the configured allowance, or
+     * one batch per round trip. A ten-wide batch on a ten-per-second budget has
+     * a second to play with, and a `getTransaction` batch that takes longer than
+     * that spends the difference idle — a wallet crawl then runs at well under
+     * the rate it was configured for and the config looks like a lie.
+     *
+     * This does not raise the rate. `acquire` hands out successive slots from
+     * one schedule, so three callers get three consecutive slots rather than
+     * three at once; overlapping them only fills the gap between a slot opening
+     * and the previous response arriving. Order is preserved by the mapper, and
+     * callers index into the result by position.
+     */
+    const groups = chunk([...signatures], this.#batchSize);
+    const pages = await mapWithConcurrency(
+      groups,
+      Math.max(1, Math.min(TRANSACTION_BATCH_CONCURRENCY, groups.length)),
+      (group) => this.#transactionBatch(group, signal),
+      signal,
+    );
+    return pages.flat();
   }
 
   async #transactionBatch(
