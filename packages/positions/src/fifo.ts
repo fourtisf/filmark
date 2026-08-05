@@ -55,9 +55,21 @@ export function accountPositions(
   return positions;
 }
 
-/** Execution order within a wallet: block time, then slot, then position in the transaction. */
+/**
+ * Execution order within a wallet: slot, then position inside the transaction.
+ *
+ * Slot is the chain's own sequence and the only authoritative one. Block time
+ * is a derived estimate with one-second granularity over blocks that arrive
+ * two and a half times a second, and it is not guaranteed to be monotonic —
+ * so ordering by it first can place a sell ahead of the buy that funded it.
+ * FIFO then finds no lot to consume, books the sale as stock that arrived from
+ * nowhere, and the position is discarded as `unknown_basis`. The trade is
+ * real, the loss is real, and the trace reports neither.
+ *
+ * Block time is deliberately not a tiebreaker either: within one slot the
+ * instruction indices are exact, and a timestamp cannot improve on them.
+ */
 export function byExecutionOrder(a: NormalisedSwap, b: NormalisedSwap): number {
-  if (a.blockTime !== b.blockTime) return a.blockTime - b.blockTime;
   if (a.slot !== b.slot) return a.slot < b.slot ? -1 : 1;
   if (a.ixIndex !== b.ixIndex) return a.ixIndex - b.ixIndex;
   return a.innerIxIndex - b.innerIxIndex;

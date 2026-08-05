@@ -76,6 +76,22 @@ export interface TraceCoverage {
   readonly toTs: number | null;
   readonly signaturesRead: number;
   readonly transactionsFetched: number;
+  /**
+   * The wallet's own swaps, counted by venue and direction — `{"pumpfun:buy": 4}`.
+   *
+   * The first thing to look at when a result seems wrong. Sells with no buys
+   * means the read lost half the trades, not that the wallet only ever sold,
+   * and every downstream figure is meaningless until that is resolved.
+   */
+  readonly swapCensus: Readonly<Record<string, number>>;
+  /**
+   * Swaps found in the wallet's transactions that another wallet executed.
+   *
+   * High here with an empty census is the signature of a wallet that trades
+   * through a bot: the transactions are signed by this address, but the venue's
+   * event names a different trader, and only the event is authoritative.
+   */
+  readonly foreignSwaps: number;
   /** True when the signature budget ran out before the lookback window did. */
   readonly historyTruncated: boolean;
   /** Losing positions found, and how many attribution actually ran on. */

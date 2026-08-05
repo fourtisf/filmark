@@ -24,7 +24,12 @@ import {
   type PositionBuyLeg,
 } from '@exitliquidity/positions';
 import type { TokenMetadataResolver } from './metadata.js';
-import { newPoolCrawlBudget, type ChainScanner, type TimeInterval } from './scan.js';
+import {
+  newPoolCrawlBudget,
+  type ChainScanner,
+  type TimeInterval,
+  type WalletScan,
+} from './scan.js';
 import type {
   TraceCoverage,
   TraceCounterparty,
@@ -207,6 +212,8 @@ export class TraceService {
         toTs: scan.newestTs,
         signaturesRead: cost.signaturesRead,
         transactionsFetched: cost.transactionsFetched,
+        swapCensus: scan.census,
+        foreignSwaps: scan.foreignSwaps,
         historyTruncated: scan.truncated,
         losingPositions: losing.length,
         positionsAttributed: analysed.length,
@@ -268,7 +275,7 @@ export class TraceService {
   #empty(
     wallet: string,
     status: TraceStatus,
-    scan: { oldestTs: number | null; newestTs: number | null; truncated: boolean },
+    scan: WalletScan,
     cost: { signaturesRead: number; transactionsFetched: number },
     startedAt: number,
     notes: string[],
@@ -284,6 +291,8 @@ export class TraceService {
       toTs: scan.newestTs,
       signaturesRead: cost.signaturesRead,
       transactionsFetched: cost.transactionsFetched,
+      swapCensus: scan.census,
+      foreignSwaps: scan.foreignSwaps,
       historyTruncated: scan.truncated,
       losingPositions,
       positionsAttributed: 0,

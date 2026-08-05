@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { WSOL_MINT, type NormalisedSwap, type Side } from '@exitliquidity/core';
 import type { TokenMetadataResolver } from './metadata.js';
 import {
+  censusOf,
   mergeIntervals,
   newPoolCrawlBudget,
   type ChainScanner,
@@ -74,6 +75,8 @@ function scannerFor(
     scanWallet: async (address: string): Promise<WalletScan> => ({
       wallet: address,
       swaps: wallet,
+      census: censusOf(wallet),
+      foreignSwaps: 0,
       oldestTs: BASE_TS,
       newestTs: BASE_TS + 3600,
       truncated: false,

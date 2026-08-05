@@ -45,10 +45,33 @@ export interface ScanCost {
   transactionsFetched: number;
 }
 
+/**
+ * What was actually read, counted by venue and direction — `pumpfun:buy: 4`.
+ *
+ * A trace that finds no losses can mean the wallet won, or that it was read
+ * wrong, and the two are indistinguishable from the totals alone. A wallet
+ * showing sells and no buys is not a quiet quarter; it is a read that lost half
+ * the trades, and that has to be visible without attaching a debugger.
+ */
+export type SwapCensus = Readonly<Record<string, number>>;
+
+export function censusOf(swaps: readonly NormalisedSwap[]): SwapCensus {
+  const census: Record<string, number> = {};
+  for (const swap of swaps) {
+    const key = `${swap.venue}:${swap.side}`;
+    census[key] = (census[key] ?? 0) + 1;
+  }
+  return census;
+}
+
 export interface WalletScan {
   readonly wallet: string;
   /** Swaps executed *by this wallet*, normalised and priced. */
   readonly swaps: readonly NormalisedSwap[];
+  /** Those swaps counted by venue and direction. */
+  readonly census: SwapCensus;
+  /** Swaps parsed in the crawled transactions that belonged to someone else. */
+  readonly foreignSwaps: number;
   /** Unix seconds of the oldest signature the crawl reached. */
   readonly oldestTs: number | null;
   readonly newestTs: number | null;
@@ -153,6 +176,11 @@ export class ChainScanner {
     return {
       wallet,
       swaps,
+      census: censusOf(swaps),
+      // Parsed swaps in the wallet's own transactions that another wallet made.
+      // A large number beside an empty census means the trades are being made
+      // through something else — a bot or a router whose own account signs.
+      foreignSwaps: parsed.length - mine.length,
       oldestTs: times.length > 0 ? Math.min(...times) : null,
       newestTs: times.length > 0 ? Math.max(...times) : null,
       truncated,

@@ -16,6 +16,7 @@ interface SwapOverrides {
   /** USD of the pool leg. Null leaves the swap unpriced. */
   readonly usd: number | null;
   readonly ts?: number;
+  readonly slot?: number;
   readonly mint?: string;
   readonly feeUsdShare?: number | null;
 }
@@ -29,7 +30,7 @@ function swap(overrides: SwapOverrides): NormalisedSwap {
   const feeShare = overrides.feeUsdShare;
   return {
     signature: `sig${seq}`,
-    slot: BigInt(1000 + seq),
+    slot: BigInt(overrides.slot ?? 1000 + seq),
     blockTime: overrides.ts ?? 1_700_000_000 + seq * 60,
     venue: 'pumpswap',
     poolId: POOL,
@@ -173,6 +174,26 @@ describe('accountPositions', () => {
 
     expect(positions).toHaveLength(2);
     expect(new Set(positions.map((p) => p.mint))).toEqual(new Set([MINT, other]));
+  });
+
+  it('orders by slot, not by block time', () => {
+    // The failure this exists to prevent, seen on a live trace: every position
+    // came back `unknown_basis` and the wallet looked like it had only ever
+    // sold. Block time is a derived estimate with one-second granularity over
+    // blocks arriving 2.5 times a second, and it is not guaranteed monotonic.
+    // Here the buy's stamp is one second AFTER the sell's, while its slot is
+    // plainly earlier. Ordering by the stamp puts the sell first, FIFO finds
+    // no lot, and a real round trip is discarded as stock from nowhere.
+    const buy = swap({ side: 'buy', base: 100, usd: 500, slot: 500, ts: 1_700_000_101 });
+    const sell = swap({ side: 'sell', base: 100, usd: 200, slot: 501, ts: 1_700_000_100 });
+
+    const positions = accountPositions(WALLET, [buy, sell]);
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.basisQuality).toBe('complete');
+    expect(positions[0]!.unbackedQty).toBe(0n);
+    expect(positions[0]!.realisedPnlUsd).toBeCloseTo(-300, 6);
+    expect(isAttributable(positions[0]!)).toBe(true);
   });
 
   it('ignores swaps belonging to another wallet', () => {
