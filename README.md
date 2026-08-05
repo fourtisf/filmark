@@ -69,7 +69,19 @@ folded into the headline figure, and the console prints all of it under the
 number. That is §7.2 and §7.4, not decoration — see `TRACE_*` in `.env.example`
 for the budgets that produce it.
 
-**When a result looks wrong, read `coverage.swapCensus` first.** It counts the
+**When a result looks wrong, ask the API and let it explain itself:**
+
+```bash
+node scripts/trace-check.mjs <WALLET>          # --url for a remote API
+```
+
+It prints the census, the skips and a sentence saying which of the five
+outcomes happened and what to do about it. `curl | grep` is the wrong tool
+here — a refused address returns a body with none of the fields being grepped
+for, so the pipeline prints nothing and a rejection is indistinguishable from a
+wallet with no history.
+
+**Read `coverage.swapCensus` first.** It counts the
 wallet's own swaps by venue and direction. Sells with no buys is not a wallet
 that only ever sold — it is a read that lost the entry legs, and the trace
 returns `unreadable_history` rather than a total. The usual cause is a trading
