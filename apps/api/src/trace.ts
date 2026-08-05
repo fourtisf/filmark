@@ -177,7 +177,13 @@ export class TraceService {
     if (sells > 0 && buys === 0) {
       notes.push(
         `${sells} ${plural(sells, 'sell was', 'sells were')} read for this wallet and no buys at all, which cannot be what happened — a wallet cannot sell what it never bought. No profit or loss is reported rather than one invented from a basis that was never read.`,
-        ...missingBuyLegCauses(scan, this.#limits.lookbackDays, this.#scanner.budget.maxSignatures),
+        ...missingBuyLegCauses(scan, {
+          lookbackDays: this.#limits.lookbackDays,
+          maxSignatures: this.#scanner.budget.maxSignatures,
+          elapsedMs: Date.now() - startedAt,
+          walletTimeBudgetMs:
+            walletDeadline === undefined ? null : Math.max(0, walletDeadline - startedAt),
+        }),
       );
       return this.#empty(
         wallet,
@@ -577,15 +583,56 @@ function plural(count: number, one: string, many: string): string {
  * stopping at `lookback_cutoff` says so outright. Ordering by evidence is the
  * difference between a diagnosis and a list of things it could be.
  */
-function missingBuyLegCauses(scan: WalletScan, lookbackDays: number, budget: number): string[] {
+interface CrawlReach {
+  readonly lookbackDays: number;
+  readonly maxSignatures: number;
+  /** Wall clock the scan actually took, for the rate it actually got. */
+  readonly elapsedMs: number;
+  /** Wall clock the wallet crawl is allowed, or null when it is unbounded. */
+  readonly walletTimeBudgetMs: number | null;
+}
+
+/**
+ * How far back a wider window could reach, bounded by *both* budgets.
+ *
+ * The signature ceiling alone is the wrong answer and a dangerous one: a quiet
+ * wallet against a large ceiling divides out to years, and following that
+ * advice sets a window the clock cannot cover, so the trace comes back cut
+ * short — with less history than the setting it started from. Every transaction
+ * costs a `getTransaction`, and the rate that call actually achieves is a
+ * property of the endpoint, not of the config. This trace just measured it, so
+ * that is the number used rather than `SOLANA_RPC_MAX_RPS`, which is a ceiling
+ * a throttled provider ignores.
+ */
+function reachableDays(read: number, reach: CrawlReach): number {
+  if (read <= 0) return reach.lookbackDays;
+  const perDay = read / reach.lookbackDays;
+
+  const byBudget = reach.maxSignatures / perDay;
+  if (reach.walletTimeBudgetMs === null) return Math.floor(byBudget);
+
+  // Floored at a millisecond rather than skipped: a scan too fast to measure is
+  // a fast endpoint, and dropping the clock bound there would let a zero time
+  // budget report the signature ceiling as if it were reachable.
+  const transactionsPerMs = read / Math.max(1, reach.elapsedMs);
+  const byClock = (transactionsPerMs * reach.walletTimeBudgetMs) / perDay;
+  return Math.floor(Math.min(byBudget, byClock));
+}
+
+function missingBuyLegCauses(scan: WalletScan, reach: CrawlReach): string[] {
   const causes: string[] = [];
+  const lookbackDays = reach.lookbackDays;
 
   if (scan.stoppedAt === 'lookback_cutoff') {
     const read = scan.cost.transactionsFetched;
-    // What the same signature budget would buy at this wallet's own density.
-    const affordableDays = read > 0 ? Math.floor((budget / read) * lookbackDays) : lookbackDays;
+    const reachable = reachableDays(read, reach);
+    const oldest = new Date((scan.oldestTs ?? 0) * 1000).toISOString().slice(0, 10);
+    const head = `The crawl stopped at the ${lookbackDays}-day lookback with history still behind it, so the simplest explanation is also the likeliest: the buys are older than the window. Nothing before ${oldest} was read at all.`;
+
     causes.push(
-      `The crawl stopped at the ${lookbackDays}-day lookback with history still behind it, so the simplest explanation is also the likeliest: the buys are older than the window. Nothing before ${new Date((scan.oldestTs ?? 0) * 1000).toISOString().slice(0, 10)} was read at all. This wallet spent ${read.toLocaleString('en-US')} of a ${budget.toLocaleString('en-US')} signature budget, which at the same density covers roughly ${affordableDays.toLocaleString('en-US')} days — raise TRACE_LOOKBACK_DAYS and run it again before concluding anything else.`,
+      reachable > lookbackDays
+        ? `${head} This wallet ran at ${read.toLocaleString('en-US')} transactions per ${lookbackDays} days, and at that density both the signature budget and the clock still cover about ${reachable.toLocaleString('en-US')} days — raise TRACE_LOOKBACK_DAYS to somewhere inside that and run it again before concluding anything else.`
+        : `${head} Widening the window is not free here: at the rate this scan actually achieved, ${lookbackDays} days already spends what the trace's clock allows, so a larger TRACE_LOOKBACK_DAYS would come back cut short rather than deeper. Raise SOLANA_RPC_MAX_RPS or API_TRACE_TIMEOUT_MS first, then widen it.`,
     );
   } else if (scan.stoppedAt === 'signature_budget' || scan.stoppedAt === 'time_budget') {
     causes.push(

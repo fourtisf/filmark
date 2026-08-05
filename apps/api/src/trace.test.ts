@@ -72,6 +72,8 @@ const deadlines: { stage: 'wallet' | 'pool'; at: number | undefined }[] = [];
 interface ScanOverrides {
   readonly walletScan?: Partial<WalletScan>;
   readonly poolScan?: Partial<PoolScan>;
+  /** Wall clock the wallet crawl burns, so a measured rate can be asserted. */
+  readonly walletScanMs?: number;
 }
 
 function scannerFor(
@@ -87,6 +89,9 @@ function scannerFor(
       deadline?: number,
     ): Promise<WalletScan> => {
       deadlines.push({ stage: 'wallet', at: deadline });
+      if (overrides.walletScanMs !== undefined) {
+        await new Promise((resolve) => setTimeout(resolve, overrides.walletScanMs));
+      }
       return {
         wallet: address,
         swaps: wallet,
@@ -266,6 +271,68 @@ describe('TraceService', () => {
     expect(report.notes[1]).toContain('TRACE_LOOKBACK_DAYS');
     // The bot explanation is evidence-gated now, not printed regardless.
     expect(report.notes.join(' ')).not.toContain('Axiom');
+  });
+
+  it('will not recommend a window the clock cannot cover', async () => {
+    /*
+     * The signature ceiling on its own divides out to years on a quiet wallet
+     * — one live trace suggested 2,887 days against a 6,000-signature budget,
+     * which at any real RPC rate is a crawl of hours against a three-minute
+     * timeout. Following it would return *less* history than the setting it
+     * started from, cut short by the deadline. The reach has to be bounded by
+     * the rate the scan actually achieved, not by the ceiling alone.
+     */
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+    const slow = service([sell], [sell], {
+      walletScan: {
+        stoppedAt: 'lookback_cutoff',
+        foreignSwaps: 0,
+        // 900 transactions in 90 days, and the stub burns the whole clock.
+        cost: { signaturesRead: 900, transactionsFetched: 900 },
+      },
+    });
+
+    // A wallet crawl that has already spent its entire allowance cannot buy
+    // another day of history, whatever the signature budget says.
+    const report = await slow.trace(VICTIM, undefined, Date.now());
+
+    expect(report.notes[1]).toContain('Widening the window is not free here');
+    expect(report.notes[1]).toContain('SOLANA_RPC_MAX_RPS');
+    expect(report.notes[1]).not.toContain('raise TRACE_LOOKBACK_DAYS to somewhere inside');
+  });
+
+  it('sizes the suggested window on the rate it measured, not the ceiling', async () => {
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+    const overrides = {
+      walletScan: {
+        stoppedAt: 'lookback_cutoff' as const,
+        foreignSwaps: 0,
+        // 90 transactions in 90 days: one a day, so days and transactions are
+        // the same unit and the arithmetic is readable in the assertions.
+        cost: { signaturesRead: 90, transactionsFetched: 90 },
+      },
+      walletScanMs: 100,
+    };
+
+    // The reach the note settled on, in days.
+    const suggested = (note: string): number =>
+      Number(/cover about ([\d,]+) days/.exec(note)?.[1]?.replace(/,/g, ''));
+
+    // Unbounded clock: only the 1,200-signature ceiling applies.
+    const unbounded = await service([sell], [sell], overrides).trace(VICTIM);
+    expect(suggested(unbounded.notes[1] as string)).toBe(1200);
+
+    // Half a second of trace, 60% of which is the wallet's: ~90 transactions
+    // per 100ms over ~300ms is ~270, and a transaction is a day at this
+    // density. Asserted as a band, because the stub's 100ms is a real timer.
+    const bounded = await service([sell], [sell], overrides).trace(
+      VICTIM,
+      undefined,
+      Date.now() + 500,
+    );
+    const days = suggested(bounded.notes[1] as string);
+    expect(days).toBeGreaterThan(200);
+    expect(days).toBeLessThan(320);
   });
 
   it('raises the bot explanation only when foreign swaps were actually seen', async () => {
