@@ -407,7 +407,12 @@ export class ChainScanner {
     const out: ParsedWithTime[] = [];
     if (signatures.length === 0) return { parsed: out, unread: 0, stoppedOnTime: false };
 
-    const size = Math.max(1, this.#rpc.transactionBatchSize);
+    // A window, not a batch. Chunking to the batch width handed the client one
+    // batch per call, so the overlap inside it had nothing to overlap with and
+    // the crawl waited out every round trip — the configured rate was never
+    // reached and no counter said so. The deadline is now checked once per
+    // window instead of once per batch, which is the price of the overlap.
+    const size = Math.max(1, this.#rpc.transactionWindowSize);
     let read = 0;
     for (const group of chunk([...signatures], size)) {
       // Signatures arrive newest first, so stopping here drops the oldest — the

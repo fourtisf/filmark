@@ -183,6 +183,16 @@ describe('SolanaRpcClient batching', () => {
     expect(call).toBe(2);
   });
 
+  it('advertises a window wide enough for its own overlap', async () => {
+    // A caller that chunks to the batch width hands over one batch per call,
+    // and the concurrency inside has nothing to run alongside. The window is
+    // the width that keeps it busy, and it is the client's to know.
+    const { client } = batchClient((r) => batchOk(r), 10);
+    expect(client.transactionBatchSize).toBe(10);
+    expect(client.transactionWindowSize).toBeGreaterThan(client.transactionBatchSize);
+    expect(client.transactionWindowSize % client.transactionBatchSize).toBe(0);
+  });
+
   it('overlaps batches instead of waiting out every round trip', async () => {
     /*
      * Run end to end, the achieved rate is whichever is slower: the configured

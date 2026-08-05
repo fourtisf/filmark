@@ -34,12 +34,16 @@ function history(count: number, now: number, shiftSec = 0): SignatureInfo[] {
 interface RpcStub {
   readonly rpc: SolanaRpcClient;
   readonly fetched: () => string[];
+  /** Signatures per `getTransactions` call, which is what carries the overlap. */
+  readonly windows: () => number[];
 }
 
 function rpcWith(signatures: SignatureInfo[], perCallMs = 0): RpcStub {
   const fetched: string[] = [];
+  const windows: number[] = [];
   const stub = {
     transactionBatchSize: 10,
+    transactionWindowSize: 30,
     getSignaturesForAddress: async (
       _address: string,
       options: { limit?: number; before?: string },
@@ -51,6 +55,7 @@ function rpcWith(signatures: SignatureInfo[], perCallMs = 0): RpcStub {
       return signatures.slice(start, start + (options.limit ?? 1000));
     },
     getTransactions: async (batch: readonly string[]): Promise<null[]> => {
+      windows.push(batch.length);
       if (perCallMs > 0) await new Promise((resolve) => setTimeout(resolve, perCallMs));
       fetched.push(...batch);
       // Null is "pruned or unavailable", which every parser path skips. The
@@ -59,7 +64,11 @@ function rpcWith(signatures: SignatureInfo[], perCallMs = 0): RpcStub {
     },
     getMintDecimals: async (): Promise<null[]> => [],
   };
-  return { rpc: stub as unknown as SolanaRpcClient, fetched: () => fetched };
+  return {
+    rpc: stub as unknown as SolanaRpcClient,
+    fetched: () => fetched,
+    windows: () => windows,
+  };
 }
 
 const NO_PRICES: QuoteOracle = { price: () => ({ price: null, reason: 'no_price_in_range' }) };
@@ -143,6 +152,23 @@ describe('ChainScanner.scanWallet', () => {
 
     expect(scan.stoppedAt).toBe('end_of_history');
     expect(scan.truncated).toBe(false);
+  });
+
+  it('hands the client a window wide enough for it to overlap inside', async () => {
+    /*
+     * The regression this exists for. `getTransactions` runs three JSON-RPC
+     * batches at a time, but this caller chunked to the *batch* width — so
+     * every call contained exactly one batch, the overlap had nothing to
+     * overlap with, and the crawl waited out every round trip. Throughput sat
+     * at a third of the configured rate with no counter saying why.
+     */
+    const now = Math.floor(Date.now() / 1000);
+    const { rpc, windows } = rpcWith(history(75, now));
+
+    await scannerFor(rpc).scanWallet(WALLET);
+
+    // 75 signatures at a window of 30: 30, 30, 15 — not eight calls of ten.
+    expect(windows()).toEqual([30, 30, 15]);
   });
 
   it('fetches the newest transactions first, so a cut-short read is recent', async () => {

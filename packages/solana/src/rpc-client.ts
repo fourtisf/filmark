@@ -170,9 +170,24 @@ export class SolanaRpcClient {
     );
   }
 
-  /** How many transactions one `getTransactions` request carries. */
+  /** How many transactions one JSON-RPC batch carries. */
   get transactionBatchSize(): number {
     return this.#batchSize;
+  }
+
+  /**
+   * How many signatures to hand `getTransactions` at once to keep it busy.
+   *
+   * A caller that pre-chunks to `transactionBatchSize` and calls once per
+   * chunk gets no overlap at all — every call contains exactly one batch, so
+   * the concurrency inside has nothing to run alongside and the crawl waits out
+   * every round trip. That is precisely what happened: the overlap was added,
+   * the throughput did not move, and the reason was one caller chunking to the
+   * wrong width. Chunk to this instead, and check whatever budget you keep
+   * between windows rather than between batches.
+   */
+  get transactionWindowSize(): number {
+    return this.#batchSize * TRANSACTION_BATCH_CONCURRENCY;
   }
 
   /**
