@@ -205,6 +205,36 @@ function classify(error: unknown): Classified {
     };
   }
   if (error instanceof UpstreamError) {
+    /*
+     * "Did not answer" is wrong for the two failures that happen most, and
+     * wrong in the expensive direction: an endpoint returning 429 answered very
+     * clearly, and so did one returning 401. Both were reported as silence,
+     * which sends an operator to check whether the service is reachable when
+     * the service had already been told exactly what was wrong. The status code
+     * is not a credential — the URL that carries the key never leaves the
+     * process, and none of these name the provider.
+     */
+    const status = error.context['status'];
+    if (status === 429) {
+      return {
+        status: 503,
+        body: {
+          error: 'rpc_rate_limited',
+          message: 'the Solana endpoint is rate-limiting this service; try again shortly',
+        },
+        retryAfter: retryAfterSeconds(error) ?? '30',
+      };
+    }
+    if (status === 401 || status === 403) {
+      return {
+        status: 502,
+        body: {
+          error: 'rpc_rejected',
+          message: 'the Solana endpoint refused this service’s credentials',
+        },
+        retryAfter: null,
+      };
+    }
     return {
       status: 502,
       body: { error: 'upstream', message: 'the Solana RPC endpoint did not answer' },
@@ -225,6 +255,19 @@ function classify(error: unknown): Classified {
  * to let any page on the internet spend it. It stays available for a deployment
  * that fronts this with its own rate limiting, but it is never the default.
  */
+/**
+ * The upstream's own `Retry-After`, when it gave one in delta-seconds.
+ *
+ * Passed through rather than guessed at: a provider that says how long it wants
+ * to be left alone knows better than a constant here, and a caller that retries
+ * sooner earns the same rejection.
+ */
+function retryAfterSeconds(error: UpstreamError): string | null {
+  const raw = error.context['retryAfter'];
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
+  return String(Math.min(Number(raw), 300));
+}
+
 function applyCors(
   response: ServerResponse,
   origin: string | undefined,

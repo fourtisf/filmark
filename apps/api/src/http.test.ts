@@ -163,6 +163,49 @@ describe('trace endpoint', () => {
     expect(response.headers.get('retry-after')).toBe('15');
   });
 
+  it('says a rate limit is a rate limit, not silence', async () => {
+    /*
+     * "The Solana RPC endpoint did not answer" on a 429 sent an operator
+     * looking for an outage, when the endpoint had answered clearly and the
+     * fix was a number in the config. The status code is not a credential.
+     */
+    const harness = await start(() =>
+      Promise.reject(
+        new UpstreamError('RPC getTransaction returned HTTP 429', {
+          context: { status: 429, retryAfter: '12', url: 'https://x/?api-key=secret' },
+        }),
+      ),
+    );
+
+    const response = await fetch(`${harness.url}/v1/trace/${WALLET}`);
+    expect(response.status).toBe(503);
+    expect((await response.clone().json()) as { error: string }).toMatchObject({
+      error: 'rpc_rate_limited',
+    });
+    // The upstream's own wait is passed through rather than guessed at.
+    expect(response.headers.get('retry-after')).toBe('12');
+    expect(await response.text()).not.toContain('api-key');
+  });
+
+  it('separates a refused credential from an endpoint that went quiet', async () => {
+    const harness = await start(() =>
+      Promise.reject(
+        new UpstreamError('RPC getTransaction returned HTTP 401', {
+          context: { status: 401, url: 'https://x/?api-key=secret' },
+        }),
+      ),
+    );
+
+    const response = await fetch(`${harness.url}/v1/trace/${WALLET}`);
+    expect(response.status).toBe(502);
+    expect((await response.clone().json()) as { error: string }).toMatchObject({
+      error: 'rpc_rejected',
+    });
+    // Nothing to retry into: a rejected key stays rejected.
+    expect(response.headers.get('retry-after')).toBeNull();
+    expect(await response.text()).not.toContain('secret');
+  });
+
   it('answers the probes', async () => {
     const harness = await start(async (wallet) => report(wallet));
     expect((await fetch(`${harness.url}/healthz`)).status).toBe(200);

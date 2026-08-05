@@ -905,9 +905,19 @@ async function traceLive(v){
 function apiError(status,body,v){
   const msg=body&&typeof body.message==="string"?body.message:"the trace could not be completed";
   setState(`Trace failed · <i>${esc(msg)}</i>`);
+  /* Keyed on the error name before the status, because one status covers more
+     than one thing: 503 is both a queue that is full and an upstream that is
+     throttling us, and those are the reader's problem and ours respectively. */
+  const byError={
+    rpc_rate_limited:"The chain endpoint is throttling this service.",
+    rpc_rejected:"This service's chain access was refused.",
+    busy:"The engine is busy right now.",
+    timeout:"That wallet took longer to read than a trace allows.",
+  };
   const heads={400:"That is not a Solana address.",502:"The Solana endpoint did not answer.",
     503:"The engine is busy right now.",504:"That wallet took longer to read than a trace allows."};
-  nothing("No result",heads[status]??"The trace could not be completed.",
+  const head=(body&&byError[body.error])??heads[status]??"The trace could not be completed.";
+  nothing("No result",head,
     `<p style="margin-top:16px">${esc(msg)}. Nothing is shown rather than something
      guessed.</p>`,v);
 }

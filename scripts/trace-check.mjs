@@ -53,6 +53,28 @@ const seconds = ((Date.now() - started) / 1000).toFixed(1);
 if (!response.ok || body === null) {
   stderr.write(`HTTP ${response.status} after ${seconds}s\n`);
   stderr.write(`${JSON.stringify(body, null, 2)}\n`);
+  /*
+   * The body is deliberately vague about upstream failures: an RPC URL carries
+   * its API key in the query string, and an error body is the classic place for
+   * one to escape. The detail is in the service's own log instead, with the
+   * provider's own words in it — so point at that rather than leaving the
+   * reader with a sentence they cannot act on.
+   */
+  if (
+    body?.error === 'upstream' ||
+    body?.error === 'rpc_rate_limited' ||
+    body?.error === 'rpc_rejected'
+  ) {
+    stderr.write(
+      `\nThe status and the endpoint's own words are in the service log, not here:\n` +
+        `  pm2 logs fillmark-api --lines 200 --nostream | grep -E "retrying RPC|trace failed"\n` +
+        (body.error === 'rpc_rate_limited'
+          ? `\nA 429 usually means SOLANA_RPC_MAX_RPS is above what the plan allows. A batch is\n` +
+            `one HTTP request but N metered calls landing together, so a batch wider than the\n` +
+            `per-second allowance is rejected however patiently the client spaced it.\n`
+          : ''),
+    );
+  }
   exit(1);
 }
 
