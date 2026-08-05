@@ -225,7 +225,19 @@ export class ChainScanner {
     const mine = read.parsed.filter((entry) => entry.swap.wallet === wallet);
     const normalised = await this.#normalise(mine, signal);
 
-    const times = crawl.signatures.map((entry) => entry.blockTime).filter(isNumber);
+    /*
+     * The window that was *read*, not the window that was crawled.
+     *
+     * Signatures are cheap and transactions are not, so a crawl routinely
+     * reaches the cutoff and then runs out of clock partway through fetching
+     * them. Taking the span from every signature seen would then report a year
+     * of coverage over a read that stopped two months in — a configured
+     * intention presented as a measurement, which is the §7.4 failure turned on
+     * the coverage block itself. Signatures come back newest first, so what was
+     * read is the head of the list.
+     */
+    const readSignatures = usable.slice(0, usable.length - read.unread);
+    const times = readSignatures.map((entry) => entry.blockTime).filter(isNumber);
 
     return {
       wallet,

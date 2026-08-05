@@ -1035,8 +1035,16 @@ function paint(m,note){
    the figure, not in a footnote somebody has to go and find. */
 function coverageHtml(r){
   const c=r.coverage,t=r.totals;
+  /* The window that was read, which is not the window that was asked for the
+     moment a budget ends the crawl early. Printing the configured number there
+     is a setting wearing the clothes of a measurement — the same fault §7.4
+     forbids in the headline figure, one row further down the page. */
+  const daysRead=c.fromTs&&c.toTs?Math.max(1,Math.round((c.toTs-c.fromTs)/86400)):null;
+  const shortRead=daysRead!==null&&daysRead<c.lookbackDays*0.9;
   const facts=[
-    ["Window",`${c.lookbackDays} day lookback`],
+    ["Window",shortRead
+      ? `${daysRead} days read of ${c.lookbackDays} asked for`
+      : `${c.lookbackDays} day lookback`],
     ["Venues read",c.venues.join(", ")],
     ["Transactions read",c.transactionsFetched.toLocaleString("en-US")],
     ["Positions attributed",c.positionsAttributed===null

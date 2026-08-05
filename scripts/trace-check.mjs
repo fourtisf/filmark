@@ -163,8 +163,20 @@ const sideTotal = (suffix) => {
 const buys = sideTotal(':buy');
 const sells = sideTotal(':sell');
 
+// The window read, which is not the window asked for once a budget cuts the
+// crawl short. Printing the configured number there is a setting dressed as a
+// measurement, and it is the first thing to mislead a reader looking for depth.
+const daysRead = c.fromTs && c.toTs ? Math.max(1, Math.round((c.toTs - c.fromTs) / 86400)) : null;
+
 stdout.write(`\n${wallet}\n  ${response.status} in ${seconds}s\n\n`);
 row('status', body.status);
+row(
+  'window read',
+  daysRead === null
+    ? `— of ${c.lookbackDays} days asked for`
+    : `${daysRead} days of ${c.lookbackDays} asked for` +
+        (daysRead < c.lookbackDays * 0.9 ? '  ← the budget, not the wallet' : ''),
+);
 row('swaps read', census.length === 0 ? 'none' : census.map(([k, v]) => `${k} ${v}`).join('  '));
 row("others' swaps", c.foreignSwaps);
 row(
