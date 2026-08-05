@@ -42,25 +42,39 @@ const FONTS = `
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">`;
 
 /**
- * The Ledger mark, laid out for a 1000px square.
+ * The Fill mark, laid out for a 1000px square.
  *
- * `k` is the unit of the original 24-grid: bar height 2k, centres 6k apart,
- * long bar 20k wide, short bar 11k. The mark's furthest point from centre is
- * sqrt((10k)^2 + (7k)^2) ~= 12.21k, which must stay inside the 500px circle
- * with room to breathe — k=34 puts it at 415px.
+ * Three stacked bars inside a circle read as a hamburger menu, which is a
+ * fatal ambiguity for a profile picture, and they leave the top and bottom of
+ * the circle empty so the mark looks timid at every size. The stem fixes both:
+ * the rows survive as the arms of an F, and the glyph fills the field.
+ *
+ * Dimensions are settled against the crop rather than scaled from the 24-grid.
+ * Stroke 120 renders 3.8px on a 32px timeline avatar, which survives; the
+ * middle arm is 0.7 of the top, past which the F reads as an E. The offset is
+ * an optical correction — computed centre of mass for this glyph is (424, 426)
+ * against a circle centre of (500, 500), and a third of that gap is enough to
+ * stop it leaning without pushing the arm into the crop.
+ *
+ * Furthest point from centre is 385 of the 500 radius: it owns the circle
+ * without touching the edge.
  */
-function mark({ k = 34, long = WH, short = RD, bleed = false } = {}) {
-  const h = 2 * k;
-  const yTop = 500 - 6 * k - k;
-  const rows = [0, 1, 2].map((i) => yTop + i * 6 * k);
-  const x = bleed ? 0 : 500 - 10 * k;
-  const wLong = bleed ? 1000 : 20 * k;
-  const wShort = bleed ? 550 : 11 * k;
+const STROKE = 120;
+const ARM = 512;
+const MID_RATIO = 0.7;
+const HEIGHT = 572;
+const COUNTER = 108;
+
+function mark({ stem = WH, arm = WH, short = RD } = {}) {
+  const x0 = 500 - ARM / 2 + 30;
+  const y0 = 500 - HEIGHT / 2 + 28;
+  const armWidth = ARM;
+  const midWidth = Math.round(ARM * MID_RATIO);
 
   return `
-    <rect x="${x}" y="${rows[0]}" width="${wLong}" height="${h}" fill="${long}"/>
-    <rect x="${x}" y="${rows[1]}" width="${wShort}" height="${h}" fill="${short}"/>
-    <rect x="${x}" y="${rows[2]}" width="${wLong}" height="${h}" fill="${long}"/>`;
+    <rect x="${x0}" y="${y0}" width="${STROKE}" height="${HEIGHT}" fill="${stem}"/>
+    <rect x="${x0}" y="${y0}" width="${armWidth}" height="${STROKE}" fill="${arm}"/>
+    <rect x="${x0}" y="${y0 + STROKE + COUNTER}" width="${midWidth}" height="${STROKE}" fill="${short}"/>`;
 }
 
 const avatar = (body, background) => `<!DOCTYPE html><html><head><meta charset="utf-8">${FONTS}
@@ -78,15 +92,16 @@ const AVATARS = {
   'x-avatar-a-dark.png': avatar(mark(), BK),
 
   // For a light timeline, and for anywhere the mark is printed on paper.
-  'x-avatar-b-light.png': avatar(mark({ long: '#16181C' }), WH),
+  'x-avatar-b-light.png': avatar(mark({ stem: '#16181C', arm: '#16181C' }), WH),
 
-  // Bars run to the edge, so the circle crops them. Loudest at small sizes;
-  // the mark stops being an object in a field and becomes the field.
-  'x-avatar-c-bleed.png': avatar(mark({ bleed: true }), BK),
+  // Single colour, for anywhere the accent cannot go: a stamp, an embroidery,
+  // a favicon over an unknown background. The middle arm still reads as the
+  // short row because its length carries that, not its colour.
+  'x-avatar-c-mono.png': avatar(mark({ short: WH }), BK),
 
-  // Red field, near-black bars. One accent, inverted — use only if the
+  // Red field, near-black glyph. One accent, inverted — use only if the
   // timeline presence matters more than the restraint everywhere else does.
-  'x-avatar-d-red.png': avatar(mark({ long: '#0B0C0E', short: WH }), RD),
+  'x-avatar-d-red.png': avatar(mark({ stem: '#0B0C0E', arm: '#0B0C0E', short: WH }), RD),
 };
 
 /** The six-column hairline grid the site sits on, at banner width. */
@@ -122,9 +137,9 @@ ${extra}
 
 /** The mark at nav scale, for use inside a banner's wordmark. */
 const NAV_MARK = `<svg viewBox="0 0 24 24" shape-rendering="crispEdges">
-  <rect x="2" y="5" width="20" height="2" fill="${G3}"/>
-  <rect x="2" y="11" width="11" height="2" fill="${RD}"/>
-  <rect x="2" y="17" width="20" height="2" fill="${G3}"/></svg>`;
+  <rect x="6.5" y="5.5" width="3" height="14" fill="${G3}"/>
+  <rect x="6.5" y="5.5" width="12" height="3" fill="${G3}"/>
+  <rect x="6.5" y="11" width="8.5" height="3" fill="${RD}"/></svg>`;
 
 /**
  * X puts the profile avatar over the banner's bottom-left corner and crops the

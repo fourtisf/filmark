@@ -9,7 +9,7 @@
  * no gradient and one accent, and rectangles stay crisp at favicon size.
  */
 /** The mark currently in use. Rewritten by scripts/set-logo.mjs. */
-export const CURRENT = 'e';
+export const CURRENT = 'g';
 
 const RD = '#E23B2E';
 const G = '#7E858E';
@@ -53,5 +53,21 @@ export const MARKS = {
     idea: 'The moment your buy crossed their sell. One stroke through the line.',
     svg: `<rect x="1" y="11" width="22" height="2" fill="${G}"/>
           <rect x="10.5" y="2" width="3" height="20" fill="${RD}" transform="rotate(38 12 12)"/>`,
+  },
+  g: {
+    name: 'Fill',
+    idea: 'Ledger with a stem. Three rows are still three rows, and the middle one is still yours — but an F cannot be mistaken for a menu icon at 32 pixels.',
+    /**
+     * Geometry settled against a circular crop rather than a square one,
+     * because the avatar is where this mark is smallest and most often seen.
+     *
+     * Uniform 3-unit stroke; the middle arm is 0.7 of the top so the glyph
+     * stays an F instead of drifting towards an E. Offset down and right of
+     * true centre: an F's mass sits top-left with an empty bottom-right
+     * quadrant, so a box-centred one leans inside a circle.
+     */
+    svg: `<rect x="6.5" y="5.5" width="3" height="14" fill="${G}"/>
+          <rect x="6.5" y="5.5" width="12" height="3" fill="${G}"/>
+          <rect x="6.5" y="11" width="8.5" height="3" fill="${RD}"/>`,
   },
 };
