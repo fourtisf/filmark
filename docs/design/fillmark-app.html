@@ -846,7 +846,19 @@ function traceDemo(key){
 async function traceLive(v){
   clearOut();
   busy=true;$("#go").disabled=true;
-  setState("Reading closed positions… <i>a busy wallet can take a minute</i>");
+
+  /* A scan is hundreds of RPC calls deep and returns one response at the end,
+     so there is no finer progress to report than the clock. Report that: a
+     line that has not moved for a minute reads as a hang, and the difference
+     between "slow" and "broken" is the only thing the reader can act on. */
+  const t0=Date.now();
+  const tick=()=>{
+    const s=Math.round((Date.now()-t0)/1000);
+    setState(`Reading closed positions… <i>${s}s elapsed · a busy wallet takes a minute</i>`);
+  };
+  tick();
+  const timer=setInterval(tick,1000);
+
   try{
     const res=await fetch(`${API}/v1/trace/${encodeURIComponent(v)}`,
       {headers:{accept:"application/json"}});
@@ -859,7 +871,7 @@ async function traceLive(v){
       `<p style="margin-top:16px">The console reached for it and got nothing back. It may
        be restarting, or this browser may not be on its allowed origins. Nothing is shown
        rather than something guessed.</p>`,v);
-  }finally{busy=false;$("#go").disabled=false}
+  }finally{clearInterval(timer);busy=false;$("#go").disabled=false}
 }
 
 function apiError(status,body,v){
