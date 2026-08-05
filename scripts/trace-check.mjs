@@ -36,7 +36,7 @@ function get(target) {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (chunk) => {
-        body += chunk;
+        body += String(chunk);
       });
       res.on('end', () => {
         resolve({ status: res.statusCode ?? 0, ok: (res.statusCode ?? 0) < 400, body });
