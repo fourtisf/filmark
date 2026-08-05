@@ -52,6 +52,50 @@ describe('SolanaRpcClient endpoint', () => {
   });
 });
 
+describe('SolanaRpcClient batch sizing', () => {
+  /**
+   * The failure this exists to prevent, observed against Helius: twenty
+   * `getTransaction` calls in one batch against a ten-per-second allowance.
+   * The limiter charged the batch its full cost, so the average rate was
+   * correct and every attempt still came back `429 Too Many Requests` — the
+   * burst lands in a single millisecond, and no amount of waiting afterwards
+   * makes it narrower. It read as a dead API key.
+   */
+  it('never lets one batch exceed the per-second allowance', () => {
+    const client = new SolanaRpcClient({
+      url: 'https://rpc.invalid',
+      maxRequestsPerSecond: 10,
+      batchSize: 20,
+      logger: silentLogger,
+    });
+
+    expect(client.transactionBatchSize).toBe(10);
+  });
+
+  it('leaves a batch that already fits alone', () => {
+    const client = new SolanaRpcClient({
+      url: 'https://rpc.invalid',
+      maxRequestsPerSecond: 50,
+      batchSize: 20,
+      logger: silentLogger,
+    });
+
+    expect(client.transactionBatchSize).toBe(20);
+  });
+
+  it('keeps at least one call per request on a sub-1 rps limit', () => {
+    const client = new SolanaRpcClient({
+      url: 'https://rpc.invalid',
+      maxRequestsPerSecond: 0.5,
+      batchSize: 20,
+      logger: silentLogger,
+    });
+
+    // Batching off, not a batch of zero — which would fetch nothing forever.
+    expect(client.transactionBatchSize).toBe(1);
+  });
+});
+
 describe('SolanaRpcClient batching', () => {
   /** Captures the request bodies so the number of round trips can be counted. */
   function batchClient(

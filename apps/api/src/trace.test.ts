@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { WSOL_MINT, type NormalisedSwap, type Side } from '@exitliquidity/core';
 import type { TokenMetadataResolver } from './metadata.js';
-import { mergeIntervals, type ChainScanner, type PoolScan, type WalletScan } from './scan.js';
+import {
+  mergeIntervals,
+  newPoolCrawlBudget,
+  type ChainScanner,
+  type PoolScan,
+  type WalletScan,
+} from './scan.js';
 import { TraceService } from './trace.js';
 
 const VICTIM = 'V1ct1mAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -48,11 +54,23 @@ function makeSwap(spec: SwapSpec): NormalisedSwap {
   };
 }
 
+const BUDGET = {
+  lookbackDays: 90,
+  maxSignatures: 1200,
+  maxPoolSignaturePages: 20,
+  maxPoolTransactions: 600,
+  signaturePageSize: 1000,
+};
+
+/** Budgets handed to `scanPool`, in call order, so sharing can be asserted. */
+const poolBudgets: { poolId: string; transactionsLeft: number }[] = [];
+
 function scannerFor(
   wallet: readonly NormalisedSwap[],
   pool: readonly NormalisedSwap[],
 ): ChainScanner {
   const stub = {
+    budget: BUDGET,
     scanWallet: async (address: string): Promise<WalletScan> => ({
       wallet: address,
       swaps: wallet,
@@ -61,12 +79,23 @@ function scannerFor(
       truncated: false,
       cost: { signaturesRead: wallet.length, transactionsFetched: wallet.length },
     }),
-    scanPool: async (poolId: string): Promise<PoolScan> => ({
-      poolId,
-      swaps: pool.filter((swap) => swap.poolId === poolId),
-      incomplete: false,
-      cost: { signaturesRead: pool.length, transactionsFetched: pool.length },
-    }),
+    scanPool: async (
+      poolId: string,
+      _intervals: unknown,
+      budget: { signaturePages: number; transactions: number },
+    ): Promise<PoolScan> => {
+      poolBudgets.push({ poolId, transactionsLeft: budget.transactions });
+      const swaps = pool.filter((swap) => swap.poolId === poolId);
+      // Spend the allowance the way the real crawl does.
+      budget.signaturePages -= 1;
+      budget.transactions -= swaps.length;
+      return {
+        poolId,
+        swaps,
+        incomplete: false,
+        cost: { signaturesRead: pool.length, transactionsFetched: swaps.length },
+      };
+    },
   };
   return stub as unknown as ChainScanner;
 }
@@ -234,6 +263,58 @@ describe('TraceService', () => {
     expect(report.tokens[0]!.symbol).toBeNull();
   });
 
+  it('draws every pool crawl from one shared budget', async () => {
+    const other = 'M1ntCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
+    const otherPool = 'Poo1CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
+
+    const buyA = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 900, offsetSec: 0 });
+    const sellA = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 300 });
+    const buyB = makeSwap({
+      wallet: VICTIM,
+      side: 'buy',
+      base: 100,
+      usd: 900,
+      offsetSec: 1000,
+      mint: other,
+      poolId: otherPool,
+    });
+    const sellB = makeSwap({
+      wallet: VICTIM,
+      side: 'sell',
+      base: 100,
+      usd: 100,
+      offsetSec: 1300,
+      mint: other,
+      poolId: otherPool,
+    });
+
+    const pool = [
+      buyA,
+      sellA,
+      buyB,
+      sellB,
+      makeSwap({ wallet: 'x', side: 'sell', base: 900, usd: 900, offsetSec: 1 }),
+      makeSwap({
+        wallet: 'y',
+        side: 'sell',
+        base: 900,
+        usd: 900,
+        offsetSec: 1001,
+        mint: other,
+        poolId: otherPool,
+      }),
+    ];
+
+    poolBudgets.length = 0;
+    await service([buyA, sellA, buyB, sellB], pool).trace(VICTIM);
+
+    expect(poolBudgets).toHaveLength(2);
+    // The second pool must see less than the first left it. Granting each pool
+    // the full ceiling is what turns a configured 600 into 600 × positions.
+    expect(poolBudgets[1]!.transactionsLeft).toBeLessThan(poolBudgets[0]!.transactionsLeft);
+    expect(poolBudgets[0]!.transactionsLeft).toBe(BUDGET.maxPoolTransactions);
+  });
+
   it('discloses that a bonding-curve fee is missing from the basis', async () => {
     const buy = {
       ...makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 500, offsetSec: 0 }),
@@ -249,6 +330,28 @@ describe('TraceService', () => {
     const report = await service([buy, sell], pool).trace(VICTIM);
     expect(report.coverage.legsWithUnknownFees).toBe(1);
     expect(report.notes.join(' ')).toContain('does not report its fee');
+  });
+});
+
+describe('newPoolCrawlBudget', () => {
+  it('opens one allowance for the whole trace, not one per pool', () => {
+    const budget = newPoolCrawlBudget({
+      lookbackDays: 90,
+      maxSignatures: 1200,
+      maxPoolSignaturePages: 20,
+      maxPoolTransactions: 600,
+      signaturePageSize: 1000,
+    });
+
+    expect(budget).toEqual({ signaturePages: 20, transactions: 600 });
+
+    // Spending it is what makes it shared: a second pool sees what the first
+    // left behind. Granting each pool the full figure multiplies the configured
+    // ceiling by the number of losing positions, which is how a three-minute
+    // timeout meets a ten-minute crawl.
+    budget.signaturePages -= 20;
+    budget.transactions -= 600;
+    expect(budget).toEqual({ signaturePages: 0, transactions: 0 });
   });
 });
 

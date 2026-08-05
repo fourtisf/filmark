@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { ConfigError, describeError, loadConfig, loadEnvFile } from '@exitliquidity/core';
 import { createHttpServer } from './http.js';
-import { createServices } from './services.js';
+import { createServices, worstCaseTraceSeconds } from './services.js';
 
 /** Same codes the ingest CLI uses, so a process manager can treat them alike. */
 const EXIT_FAILURE = 1;
@@ -51,6 +51,19 @@ async function main(): Promise<number> {
   if (services.corsOrigins.length === 0) {
     logger.warn(
       'API_CORS_ORIGINS is empty, so no browser on another origin can call this. Set it to the site origin, e.g. https://fillmark.xyz',
+    );
+  }
+
+  const worstCase = worstCaseTraceSeconds(config);
+  const timeoutSec = config.API_TRACE_TIMEOUT_MS / 1000;
+  logger.info(
+    { worstCaseSeconds: Math.round(worstCase), timeoutSeconds: timeoutSec },
+    'trace budget',
+  );
+  if (worstCase > timeoutSec) {
+    logger.warn(
+      { worstCaseSeconds: Math.round(worstCase), timeoutSeconds: timeoutSec },
+      'the trace budget can outrun the request timeout: a heavy wallet will time out rather than return a smaller answer. Lower TRACE_MAX_SIGNATURES, raise SOLANA_RPC_MAX_RPS, or raise API_TRACE_TIMEOUT_MS',
     );
   }
 

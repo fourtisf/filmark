@@ -16,7 +16,13 @@ export interface SolanaRpcOptions {
   readonly maxRequestsPerSecond?: number;
   readonly maxAttempts?: number;
   readonly timeoutMs?: number;
-  /** Transactions per JSON-RPC batch request. 1 disables batching. */
+  /**
+   * Transactions per JSON-RPC batch request. 1 disables batching.
+   *
+   * Clamped to `maxRequestsPerSecond`: one batch arrives as a single burst, and
+   * a burst wider than the provider's per-second allowance is refused however
+   * patiently the client spaced it.
+   */
   readonly batchSize?: number;
   readonly commitment?: Commitment;
   readonly logger?: Logger;
@@ -71,14 +77,30 @@ export class SolanaRpcClient {
   #nextId = 1;
 
   constructor(options: SolanaRpcOptions) {
+    const rps = options.maxRequestsPerSecond ?? 10;
+    const requested = Math.max(1, options.batchSize ?? 20);
+
     this.#url = options.url;
-    this.#limiter = new RateLimiter(options.maxRequestsPerSecond ?? 10);
+    this.#limiter = new RateLimiter(rps);
     this.#maxAttempts = options.maxAttempts ?? 5;
     this.#timeoutMs = options.timeoutMs ?? 20_000;
-    this.#batchSize = Math.max(1, options.batchSize ?? 20);
     this.#commitment = options.commitment ?? 'confirmed';
     this.#logger = options.logger ?? silentLogger;
     this.#fetch = options.fetchImpl ?? globalThis.fetch;
+
+    // A batch larger than the per-second allowance is a burst the limiter
+    // cannot smooth. It charges the batch its full cost, so the *average* rate
+    // is right — but all twenty calls still land in the same millisecond, and a
+    // provider metering a one-second window rejects them on arrival however
+    // long the client then waits. The result is a 429 on every attempt, which
+    // reads as a broken key rather than as a batch that was too wide.
+    this.#batchSize = Math.min(requested, Math.max(1, Math.floor(rps)));
+    if (this.#batchSize < requested) {
+      this.#logger.warn(
+        { requested, applied: this.#batchSize, maxRequestsPerSecond: rps },
+        'batch size reduced to the per-second limit; a wider batch would burst past it',
+      );
+    }
   }
 
   async getSlot(signal?: AbortSignal): Promise<number> {

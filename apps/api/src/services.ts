@@ -93,6 +93,25 @@ export function createServices(config: Config): ApiServices {
   };
 }
 
+/**
+ * Worst-case seconds of RPC one trace can spend, given the configured budgets.
+ *
+ * Every signature the wallet crawl keeps costs one `getTransaction`, and that
+ * term dominates everything else. Comparing this against the request timeout is
+ * the difference between a service that returns a smaller answer and one that
+ * always times out on exactly the wallets people care about — and the failure
+ * is invisible until a heavy wallet is tried, which is far too late to notice.
+ */
+export function worstCaseTraceSeconds(config: Config): number {
+  const walletPages = Math.ceil(config.TRACE_MAX_SIGNATURES / config.BACKFILL_SIGNATURE_PAGE_SIZE);
+  const calls =
+    walletPages +
+    config.TRACE_MAX_SIGNATURES +
+    config.TRACE_MAX_POOL_SIGNATURE_PAGES +
+    config.TRACE_MAX_POOL_TRANSACTIONS;
+  return calls / config.SOLANA_RPC_MAX_RPS;
+}
+
 /** Splits the comma-separated allowlist, trimming and dropping blanks. */
 export function parseOrigins(value: string): string[] {
   return value

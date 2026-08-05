@@ -24,7 +24,7 @@ import {
   type PositionBuyLeg,
 } from '@exitliquidity/positions';
 import type { TokenMetadataResolver } from './metadata.js';
-import type { ChainScanner, TimeInterval } from './scan.js';
+import { newPoolCrawlBudget, type ChainScanner, type TimeInterval } from './scan.js';
 import type {
   TraceCoverage,
   TraceCounterparty,
@@ -132,6 +132,9 @@ export class TraceService {
     const plan = this.#planLegs(analysed);
     const maxWindowSec = this.#netting.maxWindowSec ?? DEFAULT_MAX_WINDOW_SEC;
     const poolSwaps = new Map<string, readonly NormalisedSwap[]>();
+    // One allowance for the whole trace, drawn down pool by pool. `analysed` is
+    // ordered by largest loss, so what runs out of budget is what mattered least.
+    const crawlBudget = newPoolCrawlBudget(this.#scanner.budget);
     let poolsIncomplete = 0;
 
     for (const [poolId, legs] of groupLegsByPool(plan.legs)) {
@@ -139,7 +142,7 @@ export class TraceService {
         fromTs: leg.blockTime - maxWindowSec,
         toTs: leg.blockTime + maxWindowSec,
       }));
-      const scanned = await this.#scanner.scanPool(poolId, intervals, signal);
+      const scanned = await this.#scanner.scanPool(poolId, intervals, crawlBudget, signal);
       cost.signaturesRead += scanned.cost.signaturesRead;
       cost.transactionsFetched += scanned.cost.transactionsFetched;
       poolSwaps.set(poolId, scanned.swaps);

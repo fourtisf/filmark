@@ -71,6 +71,28 @@ export interface PoolScan {
   readonly cost: ScanCost;
 }
 
+/**
+ * Pool-crawl work remaining, shared by every pool in one trace.
+ *
+ * Deliberately not per pool. A trace with twelve losing positions can touch
+ * twelve pools, and a per-pool budget quietly multiplies by twelve — the
+ * configured ceiling then bears no relation to what a request actually spends,
+ * and the trace times out instead of returning a smaller answer. One budget,
+ * drawn down in order of the largest loss first, is a number an operator can
+ * reason about against the timeout.
+ */
+export interface PoolCrawlBudget {
+  signaturePages: number;
+  transactions: number;
+}
+
+export function newPoolCrawlBudget(budget: ScanBudget): PoolCrawlBudget {
+  return {
+    signaturePages: budget.maxPoolSignaturePages,
+    transactions: budget.maxPoolTransactions,
+  };
+}
+
 export interface ScannerOptions {
   readonly rpc: SolanaRpcClient;
   /** Resolved per call, so a warmed price series is visible to the next scan. */
@@ -100,6 +122,11 @@ export class ChainScanner {
     this.#budget = options.budget;
     this.#warm = options.warm;
     this.#logger = options.logger ?? silentLogger;
+  }
+
+  /** The configured ceilings, so a caller can open a crawl budget against them. */
+  get budget(): ScanBudget {
+    return this.#budget;
   }
 
   /**
@@ -145,11 +172,16 @@ export class ChainScanner {
   async scanPool(
     poolId: string,
     intervals: readonly TimeInterval[],
+    budget: PoolCrawlBudget,
     signal?: AbortSignal,
   ): Promise<PoolScan> {
     const cost: ScanCost = { signaturesRead: 0, transactionsFetched: 0 };
     if (intervals.length === 0) {
       return { poolId, swaps: [], incomplete: false, cost };
+    }
+    if (budget.signaturePages <= 0 || budget.transactions <= 0) {
+      // Earlier pools spent the trace's allowance. Reported, never faked.
+      return { poolId, swaps: [], incomplete: true, cost };
     }
 
     const merged = mergeIntervals(intervals);
@@ -157,16 +189,15 @@ export class ChainScanner {
     const wanted: SignatureInfo[] = [];
 
     let before: string | undefined;
-    let pages = 0;
     let reachedEarliest = false;
 
-    while (pages < this.#budget.maxPoolSignaturePages) {
+    while (budget.signaturePages > 0) {
       const page = await this.#rpc.getSignaturesForAddress(poolId, {
         limit: this.#budget.signaturePageSize,
         ...(before === undefined ? {} : { before }),
         ...(signal === undefined ? {} : { signal }),
       });
-      pages += 1;
+      budget.signaturePages -= 1;
       cost.signaturesRead += page.length;
       if (page.length === 0) {
         reachedEarliest = true;
@@ -186,10 +217,12 @@ export class ChainScanner {
         reachedEarliest = true;
         break;
       }
-      if (wanted.length >= this.#budget.maxPoolTransactions) break;
+      if (wanted.length >= budget.transactions) break;
     }
 
-    const capped = wanted.slice(0, this.#budget.maxPoolTransactions);
+    const capped = wanted.slice(0, budget.transactions);
+    budget.transactions -= capped.length;
+
     const parsed = await this.#parseSignatures(capped, cost, signal);
     const swaps = await this.#normalise(
       parsed.filter((entry) => entry.swap.poolId === poolId),

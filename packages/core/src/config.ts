@@ -92,18 +92,34 @@ const configSchema = z.object({
   /** Upper bound on a single trace, after which it fails rather than hangs. */
   API_TRACE_TIMEOUT_MS: positiveInt.default(180_000),
 
-  /** How far back a trace reads a wallet's history. Spec §8 assumes 90 days. */
+  /**
+   * How far back a trace reads a wallet's history. Spec §8 assumes 90 days.
+   *
+   * This is a ceiling, not a promise: an active wallet hits
+   * `TRACE_MAX_SIGNATURES` long before it hits the date, and the response says
+   * so via `coverage.historyTruncated`.
+   */
   TRACE_LOOKBACK_DAYS: positiveInt.default(90),
-  /** Signatures read for the traced wallet before the crawl is cut short. */
-  TRACE_MAX_SIGNATURES: positiveInt.default(6000),
+  /**
+   * Signatures read for the traced wallet before the crawl is cut short.
+   *
+   * Every one of these costs a `getTransaction`, so this is the dominant term
+   * in what a trace spends. At the default 10 RPC calls per second, 1200 is
+   * about two minutes of wall clock — see `API_TRACE_TIMEOUT_MS`, which has to
+   * be larger than this budget can consume or every heavy wallet times out.
+   */
+  TRACE_MAX_SIGNATURES: positiveInt.default(1200),
   /** Losing positions attributed per trace, largest loss first. */
   TRACE_MAX_POSITIONS: positiveInt.default(12),
   /** Buy legs attributed per position, largest cost basis first. */
   TRACE_MAX_LEGS_PER_POSITION: positiveInt.default(6),
-  /** Signature pages crawled per pool while reaching a window. 1000 each. */
-  TRACE_MAX_POOL_SIGNATURE_PAGES: positiveInt.default(40),
-  /** Pool transactions fetched per trace for window netting. */
-  TRACE_MAX_POOL_TRANSACTIONS: positiveInt.default(1500),
+  /**
+   * Signature pages crawled for window netting, across the whole trace. 1000
+   * signatures each, and shared by every pool rather than granted per pool.
+   */
+  TRACE_MAX_POOL_SIGNATURE_PAGES: positiveInt.default(20),
+  /** Pool transactions fetched for window netting, across the whole trace. */
+  TRACE_MAX_POOL_TRANSACTIONS: positiveInt.default(600),
 
   /** Drops swaps below this USD size. 0 keeps everything, which is the default. */
   MIN_SWAP_USD: nonNegativeInt.default(0),
