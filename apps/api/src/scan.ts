@@ -63,6 +63,19 @@ function past(deadline: Deadline): boolean {
 }
 
 /**
+ * Why the signature crawl stopped, which decides what its silence means.
+ *
+ * Only `end_of_history` says the trace saw everything. The other three each
+ * leave older history unread, and one of them — `lookback_cutoff` — is not a
+ * budget at all but the configured window doing exactly what it was asked to
+ * do. That distinction is the whole point: a wallet whose sells were read and
+ * whose buys sit a day past the cutoff produces a ledger of sales with no
+ * purchases, and without this the trace blames the venue parsers or a bot for
+ * something the lookback did.
+ */
+export type CrawlStop = 'end_of_history' | 'lookback_cutoff' | 'signature_budget' | 'time_budget';
+
+/**
  * What was actually read, counted by venue and direction — `pumpfun:buy: 4`.
  *
  * A trace that finds no losses can mean the wallet won, or that it was read
@@ -106,6 +119,8 @@ export interface WalletScan {
   readonly newestTs: number | null;
   /** True when the signature budget ran out before the lookback window did. */
   readonly truncated: boolean;
+  /** Why the crawl stopped. Only `end_of_history` means nothing was left behind. */
+  readonly stoppedAt: CrawlStop;
   /** True when the time budget, rather than a call ceiling, ended the crawl. */
   readonly stoppedOnTime: boolean;
   /** Signatures the crawl reached but never fetched a transaction for. */
@@ -225,9 +240,15 @@ export class ChainScanner {
       oldestTs: times.length > 0 ? Math.min(...times) : null,
       newestTs: times.length > 0 ? Math.max(...times) : null,
       // Either ceiling leaves history behind, so both mean the same thing to a
-      // reader: there is more of this wallet than the trace covers.
-      truncated: crawl.truncated || read.unread > 0,
-      stoppedOnTime: crawl.stoppedOnTime || read.stoppedOnTime,
+      // reader: there is more of this wallet than the trace covers. The
+      // lookback cutoff is deliberately not one of them — it leaves history
+      // behind too, but by instruction rather than by running out, and
+      // `stoppedAt` is what carries that difference.
+      truncated: crawl.stoppedAt === 'signature_budget' || read.unread > 0,
+      // A crawl that reached the cutoff but whose transactions were then cut
+      // short by the clock did not really cover the window it claims to.
+      stoppedAt: read.unread > 0 ? 'time_budget' : crawl.stoppedAt,
+      stoppedOnTime: crawl.stoppedAt === 'time_budget' || read.stoppedOnTime,
       transactionsUnread: read.unread,
       cost,
     };
@@ -324,12 +345,12 @@ export class ChainScanner {
     cost: ScanCost,
     signal?: AbortSignal,
     deadline?: Deadline,
-  ): Promise<{ signatures: SignatureInfo[]; truncated: boolean; stoppedOnTime: boolean }> {
+  ): Promise<{ signatures: SignatureInfo[]; stoppedAt: CrawlStop }> {
     const signatures: SignatureInfo[] = [];
     let before: string | undefined;
 
     while (signatures.length < this.#budget.maxSignatures) {
-      if (past(deadline)) return { signatures, truncated: true, stoppedOnTime: true };
+      if (past(deadline)) return { signatures, stoppedAt: 'time_budget' };
 
       const remaining = this.#budget.maxSignatures - signatures.length;
       const page = await this.#rpc.getSignaturesForAddress(address, {
@@ -338,11 +359,13 @@ export class ChainScanner {
         ...(signal === undefined ? {} : { signal }),
       });
       cost.signaturesRead += page.length;
-      if (page.length === 0) return { signatures, truncated: false, stoppedOnTime: false };
+      // The address itself ran out. This is the only stop that means the trace
+      // saw everything there is to see.
+      if (page.length === 0) return { signatures, stoppedAt: 'end_of_history' };
 
       for (const entry of page) {
         if (entry.blockTime !== null && entry.blockTime < cutoffTs) {
-          return { signatures, truncated: false, stoppedOnTime: false };
+          return { signatures, stoppedAt: 'lookback_cutoff' };
         }
         signatures.push(entry);
       }
@@ -350,9 +373,7 @@ export class ChainScanner {
       before = (page[page.length - 1] as SignatureInfo).signature;
     }
 
-    // Stopped on the budget rather than on the cutoff: there is more history
-    // behind this, and the trace has to say so.
-    return { signatures, truncated: true, stoppedOnTime: false };
+    return { signatures, stoppedAt: 'signature_budget' };
   }
 
   /**

@@ -136,6 +136,18 @@ export interface TraceCoverage {
   /** True when the signature budget ran out before the lookback window did. */
   readonly historyTruncated: boolean;
   /**
+   * Why the wallet crawl stopped. Only `end_of_history` means nothing was left.
+   *
+   * `lookback_cutoff` is the one that reads as success and is not: the crawl
+   * did what it was told and stopped at `lookbackDays`, and everything older
+   * than that is invisible to the trace. A wallet that bought outside the
+   * window and sold inside it therefore comes back as sells with no buys, which
+   * looks exactly like a broken read. It is the first thing to check before
+   * blaming a parser or a bot.
+   */
+  readonly crawlStoppedAt:
+    'end_of_history' | 'lookback_cutoff' | 'signature_budget' | 'time_budget';
+  /**
    * True when the trace's *time* budget, not a call ceiling, ended the crawl.
    *
    * The two are different diagnoses. A call ceiling is a configured limit doing

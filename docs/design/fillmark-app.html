@@ -941,12 +941,27 @@ const NO_RESULT={
     `<p style="margin-top:16px">Sells were found and no buys at all. A wallet cannot sell what
      it never bought, so this is not a quiet quarter — the read lost the entry legs, and every
      figure derived from it would be void.</p>
-     <p style="margin-top:14px">The usual cause is a trading bot. Both venues name the trader
-     inside their own event, never whoever paid the fee, so entries placed through Axiom,
-     Photon, BullX, Trojan or similar land under the bot's address instead of yours.
-     ${r.coverage.foreignSwaps} ${plural(r.coverage.foreignSwaps,"swap by another wallet was","swaps by other wallets were")}
-     seen inside this wallet's own transactions — if that number is large, trace that address
-     instead. The other possibility is that the buys happened on a venue with no parser yet.</p>`],
+     ${r.coverage.crawlStoppedAt==="lookback_cutoff"
+       ? `<p style="margin-top:14px">The likeliest reason is the window, not the wallet. The read
+          stopped at the ${r.coverage.lookbackDays}-day lookback with history still behind it, so a
+          position opened before ${when(r.coverage.fromTs).slice(0,6)} and closed after it shows only
+          its exit. That is a limit of this trace, not a fact about the address.</p>`
+       : r.coverage.crawlStoppedAt==="signature_budget"||r.coverage.crawlStoppedAt==="time_budget"
+       ? `<p style="margin-top:14px">The read ran out of
+          ${r.coverage.crawlStoppedAt==="time_budget"?"time":"budget"} before it reached the
+          ${r.coverage.lookbackDays}-day mark, so the older half of this wallet — most likely
+          including the entries — was never opened.</p>`
+       : ""}
+     ${r.coverage.foreignSwaps>0
+       ? `<p style="margin-top:14px">${r.coverage.foreignSwaps}
+          ${plural(r.coverage.foreignSwaps,"swap inside this wallet's own transactions was","swaps inside this wallet's own transactions were")}
+          executed by a different address. Both venues name the trader inside their own event,
+          never whoever paid the fee, so entries placed through Axiom, Photon, BullX or Trojan land
+          under the bot's address instead of yours — if that number is large, trace that one.</p>`
+       : ""}
+     <p style="margin-top:14px">Otherwise the buys were filled somewhere this build cannot read —
+     it parses ${esc(r.coverage.venues.join(" and "))} and nothing else — or the tokens arrived by
+     transfer rather than by purchase.</p>`],
   unpriced_history:["Nothing here could be priced.",r=>
     `<p style="margin-top:16px">${r.coverage.swapsUnpriced}
      ${plural(r.coverage.swapsUnpriced,"swap was","swaps were")} read and not one of them could be

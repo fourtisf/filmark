@@ -112,7 +112,15 @@ row(
   Object.keys(c.parseSkips ?? {}).length === 0 ? 'none' : JSON.stringify(c.parseSkips),
 );
 row('transactions read', c.transactionsFetched.toLocaleString('en-US'));
-row('history truncated', c.historyTruncated);
+row(
+  'crawl stopped at',
+  {
+    end_of_history: 'end of history — nothing left unread',
+    lookback_cutoff: `the ${c.lookbackDays}-day lookback — older history exists and was not read`,
+    signature_budget: 'the signature budget — older history exists and was not read',
+    time_budget: 'the clock — older history exists and was not read',
+  }[c.crawlStoppedAt] ?? (c.historyTruncated ? 'a budget' : 'unknown (older API)'),
+);
 row(
   'stopped on clock',
   c.stoppedOnTimeBudget === true
@@ -158,10 +166,35 @@ const VERDICTS = {
         : `  unknown_basis means more was sold than was read as bought — see the census above.`)
     );
   },
-  unreadable_history: () =>
-    `${sells} sells and ${buys} buys. A wallet cannot sell what it never bought, so the read lost\n` +
-    `the entry legs. ${c.foreignSwaps} swaps here were executed by another wallet — if that is large,\n` +
-    `trace that address instead. Otherwise the buys happened on a venue with no parser.`,
+  unreadable_history: () => {
+    const head =
+      `${sells} sells and ${buys} buys. A wallet cannot sell what it never bought, so the read\n` +
+      `lost the entry legs. In order of likelihood, given what this trace measured:\n`;
+    const causes = [];
+    if (c.crawlStoppedAt === 'lookback_cutoff') {
+      causes.push(
+        `  1. The buys are older than the ${c.lookbackDays}-day window. The crawl stopped at the\n` +
+          `     cutoff with history still behind it, and only ${c.transactionsFetched} transactions were\n` +
+          `     read — raise TRACE_LOOKBACK_DAYS and try again before looking anywhere else.`,
+      );
+    } else if (c.crawlStoppedAt === 'signature_budget' || c.crawlStoppedAt === 'time_budget') {
+      causes.push(
+        `  1. The crawl ran out of ${c.crawlStoppedAt === 'time_budget' ? 'time' : 'budget'} before the ${c.lookbackDays}-day cutoff, so the\n` +
+          `     older half of this wallet — most likely including the buys — was never read.`,
+      );
+    }
+    if (c.foreignSwaps > 0) {
+      causes.push(
+        `  ${causes.length + 1}. ${c.foreignSwaps} swaps here were executed by another wallet. That is the bot\n` +
+          `     signature — trace that address instead.`,
+      );
+    }
+    causes.push(
+      `  ${causes.length + 1}. The buys happened on a venue with no parser (${c.venues.join(', ')} only),\n` +
+        `     or the tokens arrived by transfer rather than by purchase.`,
+    );
+    return head + causes.join('\n');
+  },
   unpriced_history: () =>
     `${c.swapsUnpriced} swaps read, none of them priceable. Cost basis is a dollar figure, so\n` +
     `there is nothing to compute a loss from. This is the SOL/USD feed, not the wallet:\n` +

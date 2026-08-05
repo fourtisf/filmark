@@ -176,7 +176,8 @@ export class TraceService {
 
     if (sells > 0 && buys === 0) {
       notes.push(
-        `${sells} ${plural(sells, 'sell was', 'sells were')} read for this wallet and no buys at all, which cannot be what happened — a wallet cannot sell what it never bought. The entry legs were either placed by something the venue names as a different trader (${scan.foreignSwaps} such ${plural(scan.foreignSwaps, 'swap was', 'swaps were')} seen in this wallet's own transactions), or made on a venue with no parser. No profit or loss is reported rather than one invented from a basis that was never read.`,
+        `${sells} ${plural(sells, 'sell was', 'sells were')} read for this wallet and no buys at all, which cannot be what happened — a wallet cannot sell what it never bought. No profit or loss is reported rather than one invented from a basis that was never read.`,
+        ...missingBuyLegCauses(scan, this.#limits.lookbackDays, this.#scanner.budget.maxSignatures),
       );
       return this.#empty(
         wallet,
@@ -419,6 +420,7 @@ export class TraceService {
       priceSeries: this.#priceSeries?.() ?? null,
       parseSkips: scan.parseSkips,
       historyTruncated: scan.truncated,
+      crawlStoppedAt: scan.stoppedAt,
       stoppedOnTimeBudget: scan.stoppedOnTime,
       transactionsUnread: scan.transactionsUnread,
       tokenSymbolsAvailable: this.#metadata.supported,
@@ -562,6 +564,46 @@ function tallyExclusions(positions: readonly Position[]): Record<string, number>
 /** Agreement for a count, so a note does not read "1 sells were read". */
 function plural(count: number, one: string, many: string): string {
   return count === 1 ? one : many;
+}
+
+/**
+ * Why the entry legs are missing, ranked by what this trace actually measured.
+ *
+ * The note this replaces named two causes in a fixed order and led with the
+ * bot one — while printing `0 such swaps were seen`, its own evidence against
+ * itself, in the same sentence. Worse, it never mentioned the lookback at all,
+ * which is the likeliest cause by some distance: a wallet that bought before
+ * the window and sold inside it produces exactly this shape, and the crawl
+ * stopping at `lookback_cutoff` says so outright. Ordering by evidence is the
+ * difference between a diagnosis and a list of things it could be.
+ */
+function missingBuyLegCauses(scan: WalletScan, lookbackDays: number, budget: number): string[] {
+  const causes: string[] = [];
+
+  if (scan.stoppedAt === 'lookback_cutoff') {
+    const read = scan.cost.transactionsFetched;
+    // What the same signature budget would buy at this wallet's own density.
+    const affordableDays = read > 0 ? Math.floor((budget / read) * lookbackDays) : lookbackDays;
+    causes.push(
+      `The crawl stopped at the ${lookbackDays}-day lookback with history still behind it, so the simplest explanation is also the likeliest: the buys are older than the window. Nothing before ${new Date((scan.oldestTs ?? 0) * 1000).toISOString().slice(0, 10)} was read at all. This wallet spent ${read.toLocaleString('en-US')} of a ${budget.toLocaleString('en-US')} signature budget, which at the same density covers roughly ${affordableDays.toLocaleString('en-US')} days — raise TRACE_LOOKBACK_DAYS and run it again before concluding anything else.`,
+    );
+  } else if (scan.stoppedAt === 'signature_budget' || scan.stoppedAt === 'time_budget') {
+    causes.push(
+      `The crawl ran out of ${scan.stoppedAt === 'time_budget' ? 'time' : 'signature budget'} before it reached the ${lookbackDays}-day cutoff, so older history — including, most likely, the buys — was never read.`,
+    );
+  }
+
+  if (scan.foreignSwaps > 0) {
+    causes.push(
+      `${scan.foreignSwaps} ${plural(scan.foreignSwaps, 'swap', 'swaps')} in this wallet's own transactions were executed by a different address. Both venues name the trader inside their own event rather than the fee payer, so entries placed through Axiom, Photon, BullX or Trojan land under the bot's address; if that count is large, it names the address worth tracing instead.`,
+    );
+  }
+
+  causes.push(
+    `The other possibility is a venue with no parser here. This build reads ${PARSED_VENUES.join(' and ')} and nothing else, so a buy filled on Raydium, Meteora or anywhere further afield is invisible to it — as are tokens that arrived by transfer rather than by purchase.`,
+  );
+
+  return causes;
 }
 
 /** Buy legs grouped by the pool whose history has to be crawled for them. */

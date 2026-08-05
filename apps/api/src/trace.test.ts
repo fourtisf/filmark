@@ -97,6 +97,7 @@ function scannerFor(
         oldestTs: BASE_TS,
         newestTs: BASE_TS + 3600,
         truncated: false,
+        stoppedAt: 'end_of_history' as const,
         stoppedOnTime: false,
         transactionsUnread: 0,
         cost: { signaturesRead: wallet.length, transactionsFetched: wallet.length },
@@ -242,6 +243,53 @@ describe('TraceService', () => {
     expect(report.coverage.swapCensus).toEqual({ 'pumpswap:sell': 1 });
     expect(report.notes.join(' ')).toContain('cannot sell what it never bought');
     expect(report.totals.realisedPnlUsd).toBe(0);
+  });
+
+  it('blames the lookback first when the crawl stopped at the lookback', async () => {
+    /*
+     * The live misdiagnosis. A wallet came back with 20 sells and 0 buys and
+     * the note led with "placed by something the venue names as a different
+     * trader (0 such swaps were seen)" — its own evidence against itself, in
+     * the same sentence — while never mentioning that the crawl had stopped at
+     * the 90-day cutoff with history still behind it. Buys older than the
+     * window produce exactly this shape, and it is the cheapest thing to rule
+     * out, so it goes first.
+     */
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+    const report = await service([sell], [sell], {
+      walletScan: { stoppedAt: 'lookback_cutoff', foreignSwaps: 0, oldestTs: BASE_TS },
+    }).trace(VICTIM);
+
+    expect(report.status).toBe('unreadable_history');
+    expect(report.coverage.crawlStoppedAt).toBe('lookback_cutoff');
+    expect(report.notes[1]).toContain('the buys are older than the window');
+    expect(report.notes[1]).toContain('TRACE_LOOKBACK_DAYS');
+    // The bot explanation is evidence-gated now, not printed regardless.
+    expect(report.notes.join(' ')).not.toContain('Axiom');
+  });
+
+  it('raises the bot explanation only when foreign swaps were actually seen', async () => {
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+    const report = await service([sell], [sell], {
+      walletScan: { stoppedAt: 'end_of_history', foreignSwaps: 14 },
+    }).trace(VICTIM);
+
+    expect(report.notes.join(' ')).toContain('14 swaps in this wallet');
+    expect(report.notes.join(' ')).toContain('Axiom');
+    // Nothing was left unread, so the lookback is not a candidate at all.
+    expect(report.notes.join(' ')).not.toContain('older than the window');
+  });
+
+  it('keeps the unparsed-venue explanation on every missing-buy path', async () => {
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+    const report = await service([sell], [sell]).trace(VICTIM);
+    expect(report.notes.join(' ')).toContain('venue with no parser here');
+  });
+
+  it('reports a crawl that read the address to its end as exactly that', async () => {
+    const report = await service([], []).trace(VICTIM);
+    expect(report.coverage.crawlStoppedAt).toBe('end_of_history');
+    expect(report.coverage.historyTruncated).toBe(false);
   });
 
   it('still reports no_losses when buys were read and nothing lost', async () => {
