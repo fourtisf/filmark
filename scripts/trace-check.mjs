@@ -74,11 +74,29 @@ row('status', body.status);
 row('swaps read', census.length === 0 ? 'none' : census.map(([k, v]) => `${k} ${v}`).join('  '));
 row("others' swaps", c.foreignSwaps);
 row(
+  'swaps unpriced',
+  `${c.swapsUnpriced ?? '—'}${c.poolSwapsUnpriced ? ` (${c.poolSwapsUnpriced} in pools)` : ''}`,
+);
+row(
+  'price series',
+  c.priceSeries
+    ? `${c.priceSeries.minutes.toLocaleString('en-US')} minutes, ` +
+        `${new Date(c.priceSeries.fromTs * 1000).toISOString().slice(0, 16)} → ` +
+        new Date(c.priceSeries.toTs * 1000).toISOString().slice(0, 16)
+    : 'none held',
+);
+row(
   'parse skips',
   Object.keys(c.parseSkips ?? {}).length === 0 ? 'none' : JSON.stringify(c.parseSkips),
 );
 row('transactions read', c.transactionsFetched.toLocaleString('en-US'));
 row('history truncated', c.historyTruncated);
+row(
+  'stopped on clock',
+  c.stoppedOnTimeBudget === true
+    ? `yes — ${(c.transactionsUnread ?? 0).toLocaleString('en-US')} transactions unread`
+    : 'no',
+);
 row('positions closed', t.positionsClosed);
 row('excluded', Object.keys(c.excluded ?? {}).length === 0 ? 'none' : JSON.stringify(c.excluded));
 row('realised PnL', usd(t.realisedPnlUsd));
@@ -100,6 +118,15 @@ const VERDICTS = {
     `${sells} sells and ${buys} buys. A wallet cannot sell what it never bought, so the read lost\n` +
     `the entry legs. ${c.foreignSwaps} swaps here were executed by another wallet — if that is large,\n` +
     `trace that address instead. Otherwise the buys happened on a venue with no parser.`,
+  unpriced_history: () =>
+    `${c.swapsUnpriced} swaps read, none of them priceable. Cost basis is a dollar figure, so\n` +
+    `there is nothing to compute a loss from. This is the SOL/USD feed, not the wallet:\n` +
+    `${
+      c.priceSeries
+        ? `the engine holds ${c.priceSeries.minutes.toLocaleString('en-US')} minutes and this ` +
+          `wallet's trades fall outside them`
+        : 'the engine holds no price history at all'
+    }. Check PYTH_BENCHMARKS_URL is reachable from the API host and retry.`,
   no_attribution: () =>
     `Losses found, but every wallet selling into their windows was filtered out.`,
 };

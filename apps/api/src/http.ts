@@ -123,9 +123,21 @@ export function createHttpServer(options: HttpServerOptions): Server {
       controller.abort();
     }, options.traceTimeoutMs);
 
+    /*
+     * The crawls stop here; the abort above is the backstop behind it.
+     *
+     * A trace cut off by the abort returns 504 and nothing else — the work is
+     * thrown away and the caller learns only that it was slow. Handing the scan
+     * a deadline of its own, comfortably inside the timeout, turns the same
+     * budget into a smaller answer that says what it left out. The margin has
+     * to cover the accounting and netting that run after the last RPC call, and
+     * a tenth of the timeout is a floor of 100ms on any sane setting.
+     */
+    const deadline = Date.now() + options.traceTimeoutMs * 0.9;
+
     try {
       const { value, cached } = await options.cache.resolve(wallet, () =>
-        options.semaphore.run(() => options.traces.trace(wallet, controller.signal)),
+        options.semaphore.run(() => options.traces.trace(wallet, controller.signal, deadline)),
       );
 
       options.metrics.traces.inc({ outcome: cached ? 'cached' : value.status });

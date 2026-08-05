@@ -76,6 +76,8 @@ export function createServices(config: Config): ApiServices {
       maxPositions: config.TRACE_MAX_POSITIONS,
       maxLegsPerPosition: config.TRACE_MAX_LEGS_PER_POSITION,
     },
+    // Read per trace, not captured: the series grows as traces warm it.
+    priceSeries: () => prices.seriesRange,
     logger,
   });
 

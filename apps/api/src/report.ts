@@ -27,6 +27,18 @@ export type TraceStatus =
    * the red" states a result the data cannot support — §7.1.
    */
   | 'unreadable_history'
+  /**
+   * The swaps were read but none of them could be given a USD price.
+   *
+   * Also distinct from `no_losses`, and for the same reason. Cost basis is a
+   * dollar figure; with no price series behind it every position comes out
+   * `unpriced`, attribution drops all of them, and the trace lands on "nothing
+   * closed in the red" — a statement about the wallet caused by an outage at
+   * the oracle. The wallet is not the thing that failed here, and saying so is
+   * the difference between a user retrying in ten minutes and one concluding
+   * the product does not work.
+   */
+  | 'unpriced_history'
   /** Losses, but no window produced an eligible counterparty. */
   | 'no_attribution';
 
@@ -102,8 +114,37 @@ export interface TraceCoverage {
    * event names a different trader, and only the event is authoritative.
    */
   readonly foreignSwaps: number;
+  /**
+   * The wallet's own swaps that got no USD price.
+   *
+   * Read beside `swapCensus`: equal counts mean nothing in this trace has a
+   * dollar figure behind it, and every "no loss" below is an artefact of that
+   * rather than a measurement.
+   */
+  readonly swapsUnpriced: number;
+  /** Pool swaps in the netting windows with no price. Null when netting never ran. */
+  readonly poolSwapsUnpriced: number | null;
+  /**
+   * The SOL/USD minute series the service actually holds, or null when it holds
+   * none. A trace whose window sits outside this range cannot be priced.
+   */
+  readonly priceSeries: {
+    readonly fromTs: number;
+    readonly toTs: number;
+    readonly minutes: number;
+  } | null;
   /** True when the signature budget ran out before the lookback window did. */
   readonly historyTruncated: boolean;
+  /**
+   * True when the trace's *time* budget, not a call ceiling, ended the crawl.
+   *
+   * The two are different diagnoses. A call ceiling is a configured limit doing
+   * its job; a clock that ran out means the RPC endpoint is answering slower
+   * than the budget assumed, and raising the ceilings would make it worse.
+   */
+  readonly stoppedOnTimeBudget: boolean;
+  /** Signatures reached but never fetched, because the clock ran out first. */
+  readonly transactionsUnread: number;
   /** Losing positions found. Always measured. */
   readonly losingPositions: number;
   /**

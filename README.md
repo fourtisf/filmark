@@ -75,7 +75,7 @@ for the budgets that produce it.
 node scripts/trace-check.mjs <WALLET>          # --url for a remote API
 ```
 
-It prints the census, the skips and a sentence saying which of the five
+It prints the census, the skips and a sentence saying which of the six
 outcomes happened and what to do about it. `curl | grep` is the wrong tool
 here — a refused address returns a body with none of the fields being grepped
 for, so the pipeline prints nothing and a rejection is indistinguishable from a
@@ -89,6 +89,28 @@ bot: both venues name the trader inside their own event, never the fee payer, so
 entries placed through Axiom, Photon, BullX or Trojan land under the bot's
 address. `coverage.foreignSwaps` counts exactly those, and a large value there
 names the address worth tracing instead. See DECISIONS.md.
+
+**Then `coverage.swapsUnpriced`.** Cost basis is a dollar figure, so a swap with
+no price makes its position `unpriced`, and attribution drops every one of those.
+A trace whose swaps were all unpriceable therefore _arrives_ at "nothing closed
+in the red" — a statement about the wallet manufactured by an outage at Pyth. It
+returns `unpriced_history` instead, and `coverage.priceSeries` says what minutes
+the service actually holds. Nothing about the wallet has to change for this to
+clear; retrying once the feed answers does it.
+
+**And `coverage.stoppedOnTimeBudget`.** A trace is bounded twice: in RPC calls by
+the `TRACE_*` ceilings, and in wall clock by `API_TRACE_TIMEOUT_MS`. The clock is
+the one that moves when a provider throttles. When it is what ended the crawl the
+trace still answers — with `transactionsUnread` saying what it did not reach —
+rather than being cut off with nothing. If the flag is set on ordinary wallets,
+the endpoint is slower than the budget assumes and raising the ceilings makes it
+worse.
+
+> **If anything proxies this API, keep `API_TRACE_TIMEOUT_MS` under the proxy's
+> own response timeout** (Cloudflare's is 100s and not configurable below
+> Enterprise). Past it the proxy answers with an HTML error page in place of the
+> trace, which is not JSON and did not come from here; the console names that
+> case separately rather than blaming the engine.
 
 ### Cost
 

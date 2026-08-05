@@ -63,7 +63,18 @@ async function main(): Promise<number> {
   if (worstCase > timeoutSec) {
     logger.warn(
       { worstCaseSeconds: Math.round(worstCase), timeoutSeconds: timeoutSec },
-      'the trace budget can outrun the request timeout: a heavy wallet will time out rather than return a smaller answer. Lower TRACE_MAX_SIGNATURES, raise SOLANA_RPC_MAX_RPS, or raise API_TRACE_TIMEOUT_MS',
+      'the trace budget outruns the request timeout, so a heavy wallet will be cut short by the clock and return a partial answer marked stoppedOnTimeBudget. That is the intended degradation, not a fault — but if it is happening on ordinary wallets, lower TRACE_MAX_SIGNATURES, raise SOLANA_RPC_MAX_RPS, or raise API_TRACE_TIMEOUT_MS',
+    );
+  }
+
+  // A proxy or CDN in front of this has its own ceiling — Cloudflare's is 100
+  // seconds — and it does not care what this one is set to. A trace that runs
+  // past it is answered by the proxy with an error page the console cannot
+  // parse, which reads as "the engine did not answer" rather than as a timeout.
+  if (timeoutSec > 90) {
+    logger.warn(
+      { timeoutSeconds: timeoutSec },
+      "API_TRACE_TIMEOUT_MS is above 90s; if anything proxies this service, set it below that proxy's own response timeout or slow traces will be answered by the proxy instead of by this API",
     );
   }
 

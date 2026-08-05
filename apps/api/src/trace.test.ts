@@ -66,29 +66,52 @@ const BUDGET = {
 /** Budgets handed to `scanPool`, in call order, so sharing can be asserted. */
 const poolBudgets: { poolId: string; transactionsLeft: number }[] = [];
 
+/** Deadlines the service handed each stage, so the split can be asserted. */
+const deadlines: { stage: 'wallet' | 'pool'; at: number | undefined }[] = [];
+
+interface ScanOverrides {
+  readonly walletScan?: Partial<WalletScan>;
+  readonly poolScan?: Partial<PoolScan>;
+}
+
 function scannerFor(
   wallet: readonly NormalisedSwap[],
   pool: readonly NormalisedSwap[],
+  overrides: ScanOverrides = {},
 ): ChainScanner {
   const stub = {
     budget: BUDGET,
-    scanWallet: async (address: string): Promise<WalletScan> => ({
-      wallet: address,
-      swaps: wallet,
-      census: censusOf(wallet),
-      foreignSwaps: 0,
-      parseSkips: {},
-      oldestTs: BASE_TS,
-      newestTs: BASE_TS + 3600,
-      truncated: false,
-      cost: { signaturesRead: wallet.length, transactionsFetched: wallet.length },
-    }),
+    scanWallet: async (
+      address: string,
+      _signal?: AbortSignal,
+      deadline?: number,
+    ): Promise<WalletScan> => {
+      deadlines.push({ stage: 'wallet', at: deadline });
+      return {
+        wallet: address,
+        swaps: wallet,
+        census: censusOf(wallet),
+        unpricedSwaps: 0,
+        foreignSwaps: 0,
+        parseSkips: {},
+        oldestTs: BASE_TS,
+        newestTs: BASE_TS + 3600,
+        truncated: false,
+        stoppedOnTime: false,
+        transactionsUnread: 0,
+        cost: { signaturesRead: wallet.length, transactionsFetched: wallet.length },
+        ...overrides.walletScan,
+      };
+    },
     scanPool: async (
       poolId: string,
       _intervals: unknown,
       budget: { signaturePages: number; transactions: number },
+      _signal?: AbortSignal,
+      deadline?: number,
     ): Promise<PoolScan> => {
       poolBudgets.push({ poolId, transactionsLeft: budget.transactions });
+      deadlines.push({ stage: 'pool', at: deadline });
       const swaps = pool.filter((swap) => swap.poolId === poolId);
       // Spend the allowance the way the real crawl does.
       budget.signaturePages -= 1;
@@ -96,8 +119,10 @@ function scannerFor(
       return {
         poolId,
         swaps,
+        unpricedSwaps: 0,
         incomplete: false,
         cost: { signaturesRead: pool.length, transactionsFetched: swaps.length },
+        ...overrides.poolScan,
       };
     },
   };
@@ -109,11 +134,17 @@ const NO_METADATA = {
   resolve: async () => new Map(),
 } as unknown as TokenMetadataResolver;
 
-function service(wallet: readonly NormalisedSwap[], pool: readonly NormalisedSwap[]): TraceService {
+function service(
+  wallet: readonly NormalisedSwap[],
+  pool: readonly NormalisedSwap[],
+  overrides: ScanOverrides = {},
+  priceSeries?: () => { fromTs: number; toTs: number; minutes: number } | null,
+): TraceService {
   return new TraceService({
-    scanner: scannerFor(wallet, pool),
+    scanner: scannerFor(wallet, pool, overrides),
     metadata: NO_METADATA,
     limits: { lookbackDays: 90, maxPositions: 12, maxLegsPerPosition: 6 },
+    ...(priceSeries === undefined ? {} : { priceSeries }),
   });
 }
 
@@ -383,6 +414,117 @@ describe('TraceService', () => {
     const report = await service([buy, sell], pool).trace(VICTIM);
     expect(report.coverage.legsWithUnknownFees).toBe(1);
     expect(report.notes.join(' ')).toContain('does not report its fee');
+  });
+
+  it('refuses to call a price outage "nothing closed in the red"', async () => {
+    // The second shape of the same failure as sells-with-no-buys. With no
+    // SOL/USD series every leg is unpriced, every position is dropped by
+    // `isAttributable`, and the trace lands on `no_losses` — a claim about the
+    // wallet manufactured by an outage at the oracle. §7.1 forbids that.
+    const buy = { ...makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 0, offsetSec: 0 }) };
+    const sell = {
+      ...makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 0, offsetSec: 300 }),
+    };
+    const unpriced = [
+      { ...buy, usdValue: null, usdPriceSource: 'none' as const },
+      { ...sell, usdValue: null, usdPriceSource: 'none' as const },
+    ];
+
+    const report = await service(unpriced, unpriced, {
+      walletScan: { unpricedSwaps: 2 },
+    }).trace(VICTIM);
+
+    expect(report.status).toBe('unpriced_history');
+    expect(report.coverage.swapsUnpriced).toBe(2);
+    expect(report.notes.join(' ')).toContain('failure at the SOL/USD feed');
+    // The positions were still read; it is the valuation that is missing.
+    expect(report.totals.positionsClosed).toBe(1);
+    expect(report.totals.realisedPnlUsd).toBe(0);
+  });
+
+  it('discloses a partial price outage without refusing the trace', async () => {
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 500, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 300 });
+    const pool = [
+      buy,
+      sell,
+      makeSwap({ wallet: 'x', side: 'sell', base: 500, usd: 500, offsetSec: 1 }),
+    ];
+
+    const report = await service([buy, sell], pool, {
+      walletScan: { unpricedSwaps: 1 },
+    }).trace(VICTIM);
+
+    expect(report.status).toBe('ok');
+    expect(report.coverage.swapsUnpriced).toBe(1);
+    expect(report.notes.join(' ')).toContain('no SOL/USD price within the staleness bound');
+  });
+
+  it('reports the price series it actually holds', async () => {
+    const report = await service([], [], {}, () => ({
+      fromTs: 1_700_000_000,
+      toTs: 1_700_003_600,
+      minutes: 60,
+    })).trace(VICTIM);
+
+    expect(report.coverage.priceSeries).toEqual({
+      fromTs: 1_700_000_000,
+      toTs: 1_700_003_600,
+      minutes: 60,
+    });
+  });
+
+  it('says when the clock, not a ceiling, ended the crawl', async () => {
+    // A call ceiling is a configured limit doing its job. A clock that ran out
+    // means the endpoint is slower than the budget assumes, and the two want
+    // opposite fixes — so they must not read the same on the page.
+    const report = await service([], [], {
+      walletScan: { stoppedOnTime: true, truncated: true, transactionsUnread: 340 },
+    }).trace(VICTIM);
+
+    expect(report.coverage.stoppedOnTimeBudget).toBe(true);
+    expect(report.coverage.transactionsUnread).toBe(340);
+    expect(report.notes.join(' ')).toContain('ran out of time before it ran out of budget');
+    expect(report.notes.join(' ')).toContain('340 transactions unread');
+  });
+
+  it('leaves the wallet crawl time to spare for the pool crawls', async () => {
+    // One deadline spent entirely on stage one reads a wallet perfectly and
+    // attributes nothing, which is the less useful half to keep.
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 500, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 300 });
+    const pool = [
+      buy,
+      sell,
+      makeSwap({ wallet: 'x', side: 'sell', base: 500, usd: 500, offsetSec: 1 }),
+    ];
+
+    deadlines.length = 0;
+    const at = Date.now() + 100_000;
+    await service([buy, sell], pool).trace(VICTIM, undefined, at);
+
+    const walletDeadline = deadlines.find((entry) => entry.stage === 'wallet')?.at;
+    const poolDeadline = deadlines.find((entry) => entry.stage === 'pool')?.at;
+    expect(walletDeadline).toBeDefined();
+    expect(walletDeadline as number).toBeLessThan(at);
+    expect(poolDeadline).toBe(at);
+  });
+
+  it('counts unpriced pool swaps against the windows they weakened', async () => {
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 500, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 300 });
+    const pool = [
+      buy,
+      sell,
+      makeSwap({ wallet: 'x', side: 'sell', base: 500, usd: 500, offsetSec: 1 }),
+    ];
+
+    const report = await service([buy, sell], pool, { poolScan: { unpricedSwaps: 4 } }).trace(
+      VICTIM,
+    );
+
+    expect(report.coverage.poolSwapsUnpriced).toBe(4);
+    expect(report.notes.join(' ')).toContain('had no USD price');
   });
 });
 

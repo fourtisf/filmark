@@ -27,6 +27,7 @@ import type { TokenMetadataResolver } from './metadata.js';
 import {
   newPoolCrawlBudget,
   type ChainScanner,
+  type Deadline,
   type TimeInterval,
   type WalletScan,
 } from './scan.js';
@@ -58,8 +59,28 @@ export interface TraceServiceOptions {
   readonly metadata: TokenMetadataResolver;
   readonly limits: TraceLimits;
   readonly netting?: NettingOptions;
+  /**
+   * The SOL/USD minutes the service holds right now, for the coverage block.
+   *
+   * Resolved per trace rather than injected once: the series grows as traces
+   * warm it, and a snapshot taken at construction would report an empty cache
+   * forever.
+   */
+  readonly priceSeries?: () => { fromTs: number; toTs: number; minutes: number } | null;
   readonly logger?: Logger;
 }
+
+/**
+ * Share of a trace's time budget the wallet crawl may spend before pool
+ * crawling gets what is left.
+ *
+ * Without a split the first stage would happily spend the whole clock and the
+ * netting stage would find none, which produces a trace that read a wallet
+ * perfectly and attributed nothing — the least useful of the two halves to
+ * keep. Weighted towards the wallet because a trace with no swaps has nothing
+ * to net in the first place.
+ */
+const WALLET_SCAN_TIME_SHARE = 0.6;
 
 /**
  * One wallet in, one trace out.
@@ -79,6 +100,7 @@ export class TraceService {
   readonly #metadata: TokenMetadataResolver;
   readonly #limits: TraceLimits;
   readonly #netting: NettingOptions;
+  readonly #priceSeries: TraceServiceOptions['priceSeries'];
   readonly #logger: Logger;
 
   constructor(options: TraceServiceOptions) {
@@ -86,17 +108,32 @@ export class TraceService {
     this.#metadata = options.metadata;
     this.#limits = options.limits;
     this.#netting = options.netting ?? {};
+    this.#priceSeries = options.priceSeries;
     this.#logger = options.logger ?? silentLogger;
   }
 
-  async trace(wallet: string, signal?: AbortSignal): Promise<TraceReport> {
+  /**
+   * `deadline` is epoch milliseconds: the point past which the crawls stop and
+   * report what they have. Omitted, a trace runs to its call ceilings and is
+   * bounded only by the caller's own timeout — which returns nothing at all.
+   */
+  async trace(wallet: string, signal?: AbortSignal, deadline?: Deadline): Promise<TraceReport> {
     const startedAt = Date.now();
-    const scan = await this.#scanner.scanWallet(wallet, signal);
+    const walletDeadline =
+      deadline === undefined
+        ? undefined
+        : startedAt + Math.max(0, deadline - startedAt) * WALLET_SCAN_TIME_SHARE;
+
+    const scan = await this.#scanner.scanWallet(wallet, signal, walletDeadline);
 
     const cost = { ...scan.cost };
     const notes: string[] = [];
 
-    if (scan.truncated) {
+    if (scan.stoppedOnTime) {
+      notes.push(
+        `The trace ran out of time before it ran out of budget${scan.transactionsUnread > 0 ? `, leaving ${scan.transactionsUnread.toLocaleString('en-US')} transactions unread` : ''}. Everything below is what was read in the time allowed, not everything there is — the RPC endpoint is answering slower than this trace's budget assumes.`,
+      );
+    } else if (scan.truncated) {
       notes.push(
         `Only the most recent ${cost.signaturesRead.toLocaleString('en-US')} transactions were read; this wallet has more history than one trace covers.`,
       );
@@ -104,6 +141,12 @@ export class TraceService {
 
     if (scan.swaps.length === 0) {
       return this.#empty(wallet, 'no_swaps', scan, cost, startedAt, notes, 0);
+    }
+
+    if (scan.unpricedSwaps > 0 && scan.unpricedSwaps < scan.swaps.length) {
+      notes.push(
+        `${scan.unpricedSwaps} of ${scan.swaps.length} swaps had no SOL/USD price within the staleness bound. A position touching one of them is excluded from attribution rather than valued on a partial basis.`,
+      );
     }
 
     const positions = accountPositions(wallet, scan.swaps);
@@ -147,6 +190,33 @@ export class TraceService {
       );
     }
 
+    /*
+     * Cost basis is a dollar figure, so a trace with no prices has no basis.
+     *
+     * Every position then comes out `unpriced`, `isAttributable` drops all of
+     * them, and the trace lands on `no_losses` — "nothing closed in the red" —
+     * which is a claim about the wallet produced by an outage at the price
+     * oracle. §7.1 forbids exactly that, and the answer is the one
+     * `unreadable_history` already uses: name the failure rather than report a
+     * result the data cannot support. Checked after the buy-leg guard because a
+     * read that lost half the trades is the more fundamental fault of the two.
+     */
+    if (scan.unpricedSwaps === scan.swaps.length) {
+      notes.push(
+        `All ${scan.swaps.length} ${plural(scan.swaps.length, 'swap', 'swaps')} read for this wallet came back with no USD price, so there is no cost basis to compute a profit or loss from. That is a failure at the SOL/USD feed, not a finding about the wallet: nothing is reported rather than a figure derived from a basis of zero. Retrying in a few minutes is the right response.`,
+      );
+      return this.#empty(
+        wallet,
+        'unpriced_history',
+        scan,
+        cost,
+        startedAt,
+        notes,
+        positions.filter((p) => p.status === 'closed').length,
+        excluded,
+      );
+    }
+
     const losing = positions
       .filter(isAttributable)
       .sort((a, b) => a.realisedPnlUsd - b.realisedPnlUsd);
@@ -178,22 +248,36 @@ export class TraceService {
     // ordered by largest loss, so what runs out of budget is what mattered least.
     const crawlBudget = newPoolCrawlBudget(this.#scanner.budget);
     let poolsIncomplete = 0;
+    let poolSwapsUnpriced = 0;
 
     for (const [poolId, legs] of groupLegsByPool(plan.legs)) {
       const intervals: TimeInterval[] = legs.map((leg) => ({
         fromTs: leg.blockTime - maxWindowSec,
         toTs: leg.blockTime + maxWindowSec,
       }));
-      const scanned = await this.#scanner.scanPool(poolId, intervals, crawlBudget, signal);
+      const scanned = await this.#scanner.scanPool(
+        poolId,
+        intervals,
+        crawlBudget,
+        signal,
+        deadline,
+      );
       cost.signaturesRead += scanned.cost.signaturesRead;
       cost.transactionsFetched += scanned.cost.transactionsFetched;
       poolSwaps.set(poolId, scanned.swaps);
+      poolSwapsUnpriced += scanned.unpricedSwaps;
       if (scanned.incomplete) poolsIncomplete += 1;
     }
 
     if (poolsIncomplete > 0) {
       notes.push(
         `${poolsIncomplete} pool${poolsIncomplete > 1 ? 's were' : ' was'} too busy to crawl back to every window within this trace's budget. The loss from those legs is reported as unattributed rather than spread over the counterparties that were found.`,
+      );
+    }
+
+    if (poolSwapsUnpriced > 0) {
+      notes.push(
+        `${poolSwapsUnpriced} pool ${plural(poolSwapsUnpriced, 'swap', 'swaps')} inside these windows had no USD price. A sell that cannot be sized carries no weight, so those wallets are excluded rather than counted at zero.`,
       );
     }
 
@@ -249,6 +333,7 @@ export class TraceService {
         positionsAttributed: analysed.length,
         legsSkipped: plan.legsSkipped,
         legsWithUnknownFees: unknownFeeLegs,
+        poolSwapsUnpriced,
       }),
       notes,
       elapsedMs: Date.now() - startedAt,
@@ -318,6 +403,7 @@ export class TraceService {
       positionsAttributed: number | null;
       legsSkipped: number | null;
       legsWithUnknownFees: number | null;
+      poolSwapsUnpriced: number | null;
     },
   ): TraceCoverage {
     return {
@@ -329,8 +415,12 @@ export class TraceService {
       transactionsFetched: cost.transactionsFetched,
       swapCensus: scan.census,
       foreignSwaps: scan.foreignSwaps,
+      swapsUnpriced: scan.unpricedSwaps,
+      priceSeries: this.#priceSeries?.() ?? null,
       parseSkips: scan.parseSkips,
       historyTruncated: scan.truncated,
+      stoppedOnTimeBudget: scan.stoppedOnTime,
+      transactionsUnread: scan.transactionsUnread,
       tokenSymbolsAvailable: this.#metadata.supported,
       ...measured,
     };
@@ -371,6 +461,7 @@ export class TraceService {
         positionsAttributed: null,
         legsSkipped: null,
         legsWithUnknownFees: null,
+        poolSwapsUnpriced: null,
       }),
       notes,
       elapsedMs: Date.now() - startedAt,

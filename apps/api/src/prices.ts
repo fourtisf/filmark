@@ -47,6 +47,20 @@ export class SolUsdCache {
   }
 
   /**
+   * The minutes actually held, so a trace can report what priced it.
+   *
+   * A trace whose figures are all missing needs to be able to say whether the
+   * price series was empty or merely the wrong stretch of history. Without this
+   * the two are indistinguishable from the response, and a Pyth outage reads as
+   * a wallet that never lost money.
+   */
+  get seriesRange(): { fromTs: number; toTs: number; minutes: number } | null {
+    const range = this.#series.range;
+    if (range === null) return null;
+    return { fromTs: range.first, toTs: range.last, minutes: this.#series.size };
+  }
+
+  /**
    * Guarantees the series covers `[fromTs, toTs]`.
    *
    * A failure here is logged, not thrown: an unpriced swap is still a real swap
@@ -65,10 +79,14 @@ export class SolUsdCache {
 
   async #fill(fromTs: number, toTs: number, signal?: AbortSignal): Promise<void> {
     const gaps = this.#gaps(fromTs, toTs);
+    if (gaps.length === 0) return;
+
+    let loaded = 0;
     for (const gap of gaps) {
       try {
         const candles = await this.#client.fetchCandles(gap.from, gap.to, signal);
         this.#series.load(candles);
+        loaded += candles.length;
       } catch (error) {
         this.#logger.warn(
           { from: gap.from, to: gap.to, err: describeError(error) },
@@ -76,6 +94,29 @@ export class SolUsdCache {
         );
         return;
       }
+    }
+
+    /*
+     * A range that answered with no bars at all is unanswered, not covered.
+     *
+     * Recording it as covered was a one-way door: `#gaps` then reported nothing
+     * missing for that stretch for the rest of the process's life, so the first
+     * empty response from Benchmarks — a rate limit answered as `no_data`, a
+     * resolution outside its retention — left every later trace in that window
+     * priced by nothing. Unpriced legs make a position `unpriced`, which
+     * `isAttributable` drops, which the report states as "nothing closed in the
+     * red". A pricing outage came out as a finding about the wallet, on every
+     * wallet, until somebody restarted the service.
+     *
+     * The cost of not latching is one retried fetch per trace over a range Pyth
+     * genuinely has nothing for. That is the right side to be wrong on.
+     */
+    if (loaded === 0) {
+      this.#logger.warn(
+        { from: fromTs, to: toTs },
+        'SOL/USD range returned no bars; leaving it uncovered so the next trace retries',
+      );
+      return;
     }
 
     this.#coveredFrom = this.#coveredFrom === null ? fromTs : Math.min(this.#coveredFrom, fromTs);

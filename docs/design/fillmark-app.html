@@ -617,6 +617,10 @@ const API=(()=>{
 })();
 const LIVE=API!=="";
 
+/* Longer than any trace the engine will run, short enough that a request
+   nothing is going to answer stops looking like a slow one. */
+const TRACE_CLIENT_TIMEOUT_MS=210_000;
+
 /* Token symbols reach this page from on-chain metadata, which is to say from
    whoever deployed the token. They are rendered into SVG labels and into ledger
    rows, so nothing goes into markup unescaped — not even after the API has
@@ -859,19 +863,43 @@ async function traceLive(v){
   tick();
   const timer=setInterval(tick,1000);
 
+  /* A request with no client-side limit is one that can sit on this line
+     forever. The engine's own budget is minutes at the outside, so anything
+     past that is not a slow trace — it is a request nothing is going to answer,
+     and saying so beats a counter that keeps climbing. */
+  const abort=new AbortController();
+  const giveUp=setTimeout(()=>abort.abort(),TRACE_CLIENT_TIMEOUT_MS);
+
   try{
     const res=await fetch(`${API}/v1/trace/${encodeURIComponent(v)}`,
-      {headers:{accept:"application/json"}});
-    const body=await res.json().catch(()=>null);
+      {headers:{accept:"application/json"},signal:abort.signal});
+    /* A proxy or CDN in front of the API answers with its own HTML on a
+       timeout, and that is not a trace failing — it is a trace that never
+       reached the engine. Keeping the two apart is the difference between
+       "retry" and "look at your reverse proxy". */
+    const text=await res.text().catch(()=>"");
+    let body=null;
+    try{body=JSON.parse(text)}catch{body=null}
+    if(body===null&&text!==""){gatewayError(res.status,v);return}
     if(!res.ok){apiError(res.status,body,v);return}
     renderReport(body);
-  }catch{
-    setState("Trace failed · <i>the engine did not answer</i>");
-    nothing("Unreachable","The trace engine did not answer.",
-      `<p style="margin-top:16px">The console reached for it and got nothing back. It may
-       be restarting, or this browser may not be on its allowed origins. Nothing is shown
-       rather than something guessed.</p>`,v);
-  }finally{clearInterval(timer);busy=false;$("#go").disabled=false}
+  }catch(e){
+    const timedOut=e&&e.name==="AbortError";
+    setState(`Trace failed · <i>${timedOut?"no answer in time":"the engine did not answer"}</i>`);
+    nothing(timedOut?"No answer":"Unreachable",
+      timedOut?"The engine did not answer in time."
+             :"The trace engine could not be reached.",
+      timedOut
+        ? `<p style="margin-top:16px">The request was still open after
+           ${Math.round(TRACE_CLIENT_TIMEOUT_MS/1000)} seconds and was given up on. A trace is
+           bounded well inside that, so this is a request that is not going to be answered rather
+           than a wallet that is slow to read.</p>`
+        : `<p style="margin-top:16px">The console reached for it and got nothing back. Either the
+           engine is down or restarting, or this page's origin
+           (<code>${esc(location.origin)}</code>) is not in the engine's allowed origins, in which
+           case the browser blocks the reply before this page ever sees it. Nothing is shown rather
+           than something guessed.</p>`,v);
+  }finally{clearTimeout(giveUp);clearInterval(timer);busy=false;$("#go").disabled=false}
 }
 
 function apiError(status,body,v){
@@ -882,6 +910,18 @@ function apiError(status,body,v){
   nothing("No result",heads[status]??"The trace could not be completed.",
     `<p style="margin-top:16px">${esc(msg)}. Nothing is shown rather than something
      guessed.</p>`,v);
+}
+
+/* A reply that is not JSON did not come from the engine. Something in front of
+   it — a proxy, a CDN, a host error page — answered instead, and telling the
+   reader to retry would send them back into the same wall. */
+function gatewayError(status,v){
+  setState(`Trace failed · <i>answered by something other than the engine (HTTP ${status})</i>`);
+  nothing("No result","Something in front of the engine answered instead.",
+    `<p style="margin-top:16px">The reply to this trace was not JSON, so it did not come from the
+     trace API — a proxy, CDN or host error page returned HTTP ${status} in its place. A trace runs
+     for up to a couple of minutes, which is longer than most proxies wait by default, and that is
+     the usual reason. Nothing is shown rather than something guessed.</p>`,v);
 }
 
 /* Four outcomes, four different things to say. A wallet with no trades and a
@@ -907,6 +947,19 @@ const NO_RESULT={
      ${r.coverage.foreignSwaps} ${plural(r.coverage.foreignSwaps,"swap by another wallet was","swaps by other wallets were")}
      seen inside this wallet's own transactions — if that number is large, trace that address
      instead. The other possibility is that the buys happened on a venue with no parser yet.</p>`],
+  unpriced_history:["Nothing here could be priced.",r=>
+    `<p style="margin-top:16px">${r.coverage.swapsUnpriced}
+     ${plural(r.coverage.swapsUnpriced,"swap was","swaps were")} read and not one of them could be
+     given a dollar value. Cost basis is a dollar figure, so with no prices there is no profit and
+     no loss to report — and "nothing closed in the red" would be a claim about this wallet caused
+     by a failure somewhere else entirely.</p>
+     <p style="margin-top:14px">The price feed is Pyth's SOL/USD minute series, which is upstream
+     of everything above and nothing to do with the address. ${!r.coverage.priceSeries
+       ? "The engine currently holds no price history at all."
+       : `The engine holds ${r.coverage.priceSeries.minutes.toLocaleString("en-US")} minutes,
+          ${when(r.coverage.priceSeries.fromTs)} to ${when(r.coverage.priceSeries.toTs)} — this
+          wallet's trades fall outside that.`} Trying again in a few minutes is the right
+     response.</p>`],
   no_attribution:["Losses found. Nobody to attribute them to.",()=>
     `<p style="margin-top:16px">Every wallet selling into those windows was filtered out — the
      trader itself, a bot round-tripping inventory, or a trade nothing could price. Nothing is
@@ -967,9 +1020,18 @@ function coverageHtml(r){
     ["Attributed",usd(t.attributedUsd)],
     ["Unattributed",usd(t.unattributedUsd)],
     ["Realised PnL",signedUsd(t.realisedPnlUsd)],
-    ["Scan time",(r.elapsedMs/1000).toFixed(1)+"s"],
+    ["Scan time",(r.elapsedMs/1000).toFixed(1)+"s"
+      +(c.stoppedOnTimeBudget?" · cut short by the clock":"")],
     ["Swaps read",Object.entries(c.swapCensus||{}).map(([k,v])=>`${k} ${v}`).join("  ")||"none"],
     ["Other wallets' swaps",String(c.foreignSwaps??0)],
+    // The three below used to be measured and never shown, which is how a
+    // pricing outage reached the page dressed as a wallet that never lost
+    // money. A figure that decides what the headline says belongs beside it.
+    ["Swaps unpriced",c.swapsUnpriced===undefined?"—"
+      :`${c.swapsUnpriced}${c.poolSwapsUnpriced?` · ${c.poolSwapsUnpriced} in pools`:""}`],
+    ["Positions excluded",Object.entries(c.excluded||{}).map(([k,v])=>
+      `${k.replace(/_/g," ")} ${v}`).join("  ")||"none"],
+    ["Parser refusals",Object.entries(c.parseSkips||{}).map(([k,v])=>`${k} ${v}`).join("  ")||"none"],
   ];
   return `<div class="cov-g">${facts.map(f=>
       `<div><div class="st-l">${esc(f[0])}</div><b>${esc(f[1])}</b></div>`).join("")}</div>`
