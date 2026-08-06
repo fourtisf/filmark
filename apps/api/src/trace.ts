@@ -23,10 +23,13 @@ import {
   type Position,
   type PositionBuyLeg,
 } from '@exitliquidity/positions';
+import type { WalletIndexRequester } from './index-request.js';
+import type { IndexedWalletSource } from './index-source.js';
 import type { TokenMetadataResolver } from './metadata.js';
 import {
   newPoolCrawlBudget,
   type ChainScanner,
+  type Deadline,
   type TimeInterval,
   type WalletScan,
 } from './scan.js';
@@ -34,6 +37,7 @@ import type {
   TraceCoverage,
   TraceCounterparty,
   TraceReport,
+  TraceSource,
   TraceStatus,
   TraceToken,
   TraceTotals,
@@ -58,8 +62,46 @@ export interface TraceServiceOptions {
   readonly metadata: TokenMetadataResolver;
   readonly limits: TraceLimits;
   readonly netting?: NettingOptions;
+  /**
+   * The SOL/USD minutes the service holds right now, for the coverage block.
+   *
+   * Resolved per trace rather than injected once: the series grows as traces
+   * warm it, and a snapshot taken at construction would report an empty cache
+   * forever.
+   */
+  readonly priceSeries?: () => { fromTs: number; toTs: number; minutes: number } | null;
+  /**
+   * Consulted before the chain is.
+   *
+   * A live crawl is one `getTransaction` per signature and a wallet's year is
+   * thousands of them; no arrangement of that is a web request. When the index
+   * has been backfilled for a wallet it answers in a query instead, and the
+   * report says which of the two did.
+   */
+  readonly index?: IndexedWalletSource;
+  /**
+   * Told when a trace was shaped by a budget rather than by the wallet.
+   *
+   * The live crawl cannot read an active wallet's year inside a web request —
+   * that is arithmetic, not tuning. Rather than leave the visitor at a dead end
+   * that says the history is unreadable, the same finding becomes a request to
+   * read it properly out of band, and the next visit is answered in a query.
+   */
+  readonly indexRequests?: WalletIndexRequester;
   readonly logger?: Logger;
 }
+
+/**
+ * Share of a trace's time budget the wallet crawl may spend before pool
+ * crawling gets what is left.
+ *
+ * Without a split the first stage would happily spend the whole clock and the
+ * netting stage would find none, which produces a trace that read a wallet
+ * perfectly and attributed nothing — the least useful of the two halves to
+ * keep. Weighted towards the wallet because a trace with no swaps has nothing
+ * to net in the first place.
+ */
+const WALLET_SCAN_TIME_SHARE = 0.6;
 
 /**
  * One wallet in, one trace out.
@@ -79,6 +121,9 @@ export class TraceService {
   readonly #metadata: TokenMetadataResolver;
   readonly #limits: TraceLimits;
   readonly #netting: NettingOptions;
+  readonly #priceSeries: TraceServiceOptions['priceSeries'];
+  readonly #index: IndexedWalletSource | undefined;
+  readonly #indexRequests: WalletIndexRequester | undefined;
   readonly #logger: Logger;
 
   constructor(options: TraceServiceOptions) {
@@ -86,28 +131,102 @@ export class TraceService {
     this.#metadata = options.metadata;
     this.#limits = options.limits;
     this.#netting = options.netting ?? {};
+    this.#priceSeries = options.priceSeries;
+    this.#index = options.index;
+    this.#indexRequests = options.indexRequests;
     this.#logger = options.logger ?? silentLogger;
   }
 
-  async trace(wallet: string, signal?: AbortSignal): Promise<TraceReport> {
+  /**
+   * `deadline` is epoch milliseconds: the point past which the crawls stop and
+   * report what they have. Omitted, a trace runs to its call ceilings and is
+   * bounded only by the caller's own timeout — which returns nothing at all.
+   */
+  async trace(wallet: string, signal?: AbortSignal, deadline?: Deadline): Promise<TraceReport> {
+    const report = await this.#compute(wallet, signal, deadline);
+    if (this.#indexRequests === undefined) return report;
+
+    /*
+     * A dead end becomes a request.
+     *
+     * Awaited rather than fired and forgotten, because the note below tells the
+     * visitor their wallet is being read properly — and a promise nobody wrote
+     * down is exactly the finding §7.1 forbids. The requester bounds its own
+     * wait and answers false rather than throwing, so the worst case is this
+     * trace returning unchanged.
+     */
+    if (!(await this.#indexRequests.request(report))) return report;
+
+    return {
+      ...report,
+      coverage: { ...report.coverage, deepReadRequested: true },
+      notes: [
+        ...report.notes,
+        'This wallet has been queued for a full read, which runs without a browser waiting on it and so is not bound by the budgets above. Trace it again in a few minutes and the answer comes from the index rather than from as much of the chain as a request had time for.',
+      ],
+    };
+  }
+
+  async #compute(wallet: string, signal?: AbortSignal, deadline?: Deadline): Promise<TraceReport> {
     const startedAt = Date.now();
-    const scan = await this.#scanner.scanWallet(wallet, signal);
+    const walletDeadline =
+      deadline === undefined
+        ? undefined
+        : startedAt + Math.max(0, deadline - startedAt) * WALLET_SCAN_TIME_SHARE;
+
+    /*
+     * The index first, the chain second.
+     *
+     * `read` returns null unless a backfill has recorded that it covers this
+     * wallet over this window — an index that quietly serves a narrower window
+     * than it was asked for is worse than no index, so the fallback is silent
+     * and the source is reported either way.
+     */
+    const indexed = await this.#index?.read(wallet, this.#limits.lookbackDays).catch(() => null);
+    const scan = indexed ?? (await this.#scanner.scanWallet(wallet, signal, walletDeadline));
+    const source: TraceSource = indexed === null || indexed === undefined ? 'live' : 'index';
 
     const cost = { ...scan.cost };
     const notes: string[] = [];
 
-    if (scan.truncated) {
+    if (source === 'index') {
+      notes.push(
+        `Answered from the swap index rather than by crawling the chain, so this trace spent no RPC and covers the whole ${scan.windowDays}-day window a backfill already paid for, rather than as much of it as a request had time for.`,
+      );
+    }
+
+    if (scan.stoppedOnTime) {
+      notes.push(
+        `The trace ran out of time before it ran out of budget${scan.transactionsUnread > 0 ? `, leaving ${scan.transactionsUnread.toLocaleString('en-US')} transactions unread` : ''}. Everything below is what was read in the time allowed, not everything there is — the RPC endpoint is answering slower than this trace's budget assumes.`,
+      );
+    } else if (scan.truncated) {
       notes.push(
         `Only the most recent ${cost.signaturesRead.toLocaleString('en-US')} transactions were read; this wallet has more history than one trace covers.`,
       );
     }
 
     if (scan.swaps.length === 0) {
-      return this.#empty(wallet, 'no_swaps', scan, cost, startedAt, notes, 0);
+      // Nothing was accounted, so every figure below is genuinely unknown.
+      return this.#empty(source, wallet, 'no_swaps', scan, cost, startedAt, notes, []);
+    }
+
+    if (scan.unpricedSwaps > 0 && scan.unpricedSwaps < scan.swaps.length) {
+      notes.push(
+        `${scan.unpricedSwaps} of ${scan.swaps.length} swaps had no SOL/USD price within the staleness bound. A position touching one of them is excluded from attribution rather than valued on a partial basis.`,
+      );
     }
 
     const positions = accountPositions(wallet, scan.swaps);
     const excluded = tallyExclusions(positions);
+    const closed = positions.filter((position) => position.status === 'closed');
+    /*
+     * Closed positions whose entry legs were never read.
+     *
+     * FIFO marks these `unknown_basis` because it saw an exit it has no lot
+     * for. They are the per-mint form of the wallet-wide guard below, and the
+     * reason that guard is not enough on its own.
+     */
+    const unbacked = closed.filter((position) => position.basisQuality === 'unknown_basis');
 
     /*
      * A wallet cannot sell what it never bought.
@@ -133,16 +252,52 @@ export class TraceService {
 
     if (sells > 0 && buys === 0) {
       notes.push(
-        `${sells} ${plural(sells, 'sell was', 'sells were')} read for this wallet and no buys at all, which cannot be what happened — a wallet cannot sell what it never bought. The entry legs were either placed by something the venue names as a different trader (${scan.foreignSwaps} such ${plural(scan.foreignSwaps, 'swap was', 'swaps were')} seen in this wallet's own transactions), or made on a venue with no parser. No profit or loss is reported rather than one invented from a basis that was never read.`,
+        `${sells} ${plural(sells, 'sell was', 'sells were')} read for this wallet and no buys at all, which cannot be what happened — a wallet cannot sell what it never bought. No profit or loss is reported rather than one invented from a basis that was never read.`,
+        ...missingBuyLegCauses(scan, {
+          lookbackDays: scan.windowDays,
+          maxSignatures: this.#scanner.budget.maxSignatures,
+          elapsedMs: Date.now() - startedAt,
+          walletTimeBudgetMs:
+            walletDeadline === undefined ? null : Math.max(0, walletDeadline - startedAt),
+        }),
       );
       return this.#empty(
+        source,
         wallet,
         'unreadable_history',
         scan,
         cost,
         startedAt,
         notes,
-        positions.filter((p) => p.status === 'closed').length,
+        positions,
+        excluded,
+      );
+    }
+
+    /*
+     * Cost basis is a dollar figure, so a trace with no prices has no basis.
+     *
+     * Every position then comes out `unpriced`, `isAttributable` drops all of
+     * them, and the trace lands on `no_losses` — "nothing closed in the red" —
+     * which is a claim about the wallet produced by an outage at the price
+     * oracle. §7.1 forbids exactly that, and the answer is the one
+     * `unreadable_history` already uses: name the failure rather than report a
+     * result the data cannot support. Checked after the buy-leg guard because a
+     * read that lost half the trades is the more fundamental fault of the two.
+     */
+    if (scan.unpricedSwaps === scan.swaps.length) {
+      notes.push(
+        `All ${scan.swaps.length} ${plural(scan.swaps.length, 'swap', 'swaps')} read for this wallet came back with no USD price, so there is no cost basis to compute a profit or loss from. That is a failure at the SOL/USD feed, not a finding about the wallet: nothing is reported rather than a figure derived from a basis of zero. Retrying in a few minutes is the right response.`,
+      );
+      return this.#empty(
+        source,
+        wallet,
+        'unpriced_history',
+        scan,
+        cost,
+        startedAt,
+        notes,
+        positions,
         excluded,
       );
     }
@@ -152,15 +307,62 @@ export class TraceService {
       .sort((a, b) => a.realisedPnlUsd - b.realisedPnlUsd);
 
     if (losing.length === 0) {
+      /*
+       * "Nothing closed in the red" is a claim about the wallet. It cannot be
+       * made over positions whose cost basis was never read.
+       *
+       * The guard above catches only the fully degenerate read — sells and no
+       * buys anywhere — and one surviving buy on one mint switches it off. A
+       * read that lost the entries for thirty mints and kept one on a
+       * thirty-first passed straight through it and landed here, where every
+       * unbacked position had already been dropped by `isAttributable`, and
+       * answered "nothing closed in the red" over a read that was just as
+       * broken. The count was in `excluded.unknown_basis` the whole time,
+       * contradicting the headline three rows further down the page.
+       */
+      if (unbacked.length > 0) {
+        notes.push(
+          `${unbacked.length} of ${closed.length} closed ${plural(closed.length, 'position', 'positions')} were exits this trace found no matching entry for, so they have no cost basis and no profit or loss can be computed for them. Nothing is reported rather than "nothing was lost", which would be a claim about this wallet produced by the half of its history that was not read.`,
+          ...missingBuyLegCauses(scan, {
+            lookbackDays: scan.windowDays,
+            maxSignatures: this.#scanner.budget.maxSignatures,
+            elapsedMs: Date.now() - startedAt,
+            walletTimeBudgetMs:
+              walletDeadline === undefined ? null : Math.max(0, walletDeadline - startedAt),
+          }),
+        );
+        return this.#empty(
+          source,
+          wallet,
+          'unreadable_history',
+          scan,
+          cost,
+          startedAt,
+          notes,
+          positions,
+          excluded,
+        );
+      }
+
       return this.#empty(
+        source,
         wallet,
         'no_losses',
         scan,
         cost,
         startedAt,
         notes,
-        positions.filter((p) => p.status === 'closed').length,
+        positions,
         excluded,
+      );
+    }
+
+    if (unbacked.length > 0) {
+      // The figures below are real, but they are computed over the positions
+      // this trace could read a basis for — not over the wallet. Saying which
+      // is the difference between a partial answer and an overstated one.
+      notes.push(
+        `${unbacked.length} of ${closed.length} closed ${plural(closed.length, 'position was', 'positions were')} an exit with no entry this trace could find, so ${plural(unbacked.length, 'it is', 'they are')} excluded from every figure below. What is reported is the part of this wallet whose cost basis was actually read.`,
       );
     }
 
@@ -178,22 +380,36 @@ export class TraceService {
     // ordered by largest loss, so what runs out of budget is what mattered least.
     const crawlBudget = newPoolCrawlBudget(this.#scanner.budget);
     let poolsIncomplete = 0;
+    let poolSwapsUnpriced = 0;
 
     for (const [poolId, legs] of groupLegsByPool(plan.legs)) {
       const intervals: TimeInterval[] = legs.map((leg) => ({
         fromTs: leg.blockTime - maxWindowSec,
         toTs: leg.blockTime + maxWindowSec,
       }));
-      const scanned = await this.#scanner.scanPool(poolId, intervals, crawlBudget, signal);
+      const scanned = await this.#scanner.scanPool(
+        poolId,
+        intervals,
+        crawlBudget,
+        signal,
+        deadline,
+      );
       cost.signaturesRead += scanned.cost.signaturesRead;
       cost.transactionsFetched += scanned.cost.transactionsFetched;
       poolSwaps.set(poolId, scanned.swaps);
+      poolSwapsUnpriced += scanned.unpricedSwaps;
       if (scanned.incomplete) poolsIncomplete += 1;
     }
 
     if (poolsIncomplete > 0) {
       notes.push(
         `${poolsIncomplete} pool${poolsIncomplete > 1 ? 's were' : ' was'} too busy to crawl back to every window within this trace's budget. The loss from those legs is reported as unattributed rather than spread over the counterparties that were found.`,
+      );
+    }
+
+    if (poolSwapsUnpriced > 0) {
+      notes.push(
+        `${poolSwapsUnpriced} pool ${plural(poolSwapsUnpriced, 'swap', 'swaps')} inside these windows had no USD price. A sell that cannot be sized carries no weight, so those wallets are excluded rather than counted at zero.`,
       );
     }
 
@@ -242,13 +458,14 @@ export class TraceService {
       totals,
       tokens: buildTokens(analysed, merged, symbols),
       counterparties: counterparties.map((entry) => toCounterparty(entry, symbols)),
-      coverage: this.#coverage(scan, cost, {
+      coverage: this.#coverage(source, scan, cost, {
         losingPositions: losing.length,
         poolsIncomplete,
         excluded,
         positionsAttributed: analysed.length,
         legsSkipped: plan.legsSkipped,
         legsWithUnknownFees: unknownFeeLegs,
+        poolSwapsUnpriced,
       }),
       notes,
       elapsedMs: Date.now() - startedAt,
@@ -309,6 +526,7 @@ export class TraceService {
    * that only mean something once attribution runs are null until it does.
    */
   #coverage(
+    source: TraceSource,
     scan: WalletScan,
     cost: { signaturesRead: number; transactionsFetched: number },
     measured: {
@@ -318,10 +536,14 @@ export class TraceService {
       positionsAttributed: number | null;
       legsSkipped: number | null;
       legsWithUnknownFees: number | null;
+      poolSwapsUnpriced: number | null;
     },
   ): TraceCoverage {
     return {
-      lookbackDays: this.#limits.lookbackDays,
+      source,
+      // The scan's own window, not the configured one. An index answer covers
+      // whatever a backfill paid for, which is usually wider than a request.
+      lookbackDays: scan.windowDays,
       venues: PARSED_VENUES,
       fromTs: scan.oldestTs,
       toTs: scan.newestTs,
@@ -329,8 +551,15 @@ export class TraceService {
       transactionsFetched: cost.transactionsFetched,
       swapCensus: scan.census,
       foreignSwaps: scan.foreignSwaps,
+      swapsUnpriced: scan.unpricedSwaps,
+      priceSeries: this.#priceSeries?.() ?? null,
       parseSkips: scan.parseSkips,
       historyTruncated: scan.truncated,
+      crawlStoppedAt: scan.stoppedAt,
+      stoppedOnTimeBudget: scan.stoppedOnTime,
+      transactionsUnread: scan.transactionsUnread,
+      // Set by `trace` only once a request has actually been recorded.
+      deepReadRequested: false,
       tokenSymbolsAvailable: this.#metadata.supported,
       ...measured,
     };
@@ -338,32 +567,54 @@ export class TraceService {
 
   /** A trace that stopped before it had anything to attribute. */
   #empty(
+    source: TraceSource,
     wallet: string,
     status: TraceStatus,
     scan: WalletScan,
     cost: { signaturesRead: number; transactionsFetched: number },
     startedAt: number,
     notes: string[],
-    positionsClosed: number,
+    positions: readonly Position[],
     excluded: Record<string, number> = {},
   ): TraceReport {
+    /*
+     * Measured where it can be, null where it cannot. Never zero.
+     *
+     * These used to be eight hardcoded zeros, and the page printed them as
+     * findings. The worst was `realisedPnlUsd` on `no_losses`: the positions
+     * had been accounted, so a real figure existed, and a wallet that closed
+     * ten profitable positions was shown a flat $0 under a heading saying
+     * nothing closed in the red. Both halves of that were the constant, not the
+     * wallet — §7.4, one method below the comment that says so.
+     */
+    const closed = positions.filter((position) => position.status === 'closed');
+    const complete = closed.filter((position) => position.basisQuality === 'complete');
+
     return {
       wallet,
       generatedAt: nowSeconds(),
       status,
       totals: {
-        attributedUsd: 0,
-        unattributedUsd: 0,
-        realisedLossUsd: 0,
-        realisedPnlUsd: 0,
-        positionsClosed,
-        positionsInTheRed: 0,
-        counterparties: 0,
-        largestCounterpartyUsd: 0,
+        // Attribution never ran on this path, so there is nothing to report.
+        attributedUsd: null,
+        unattributedUsd: null,
+        realisedLossUsd: null,
+        counterparties: null,
+        largestCounterpartyUsd: null,
+        // These only need a basis, which accounting already produced.
+        realisedPnlUsd:
+          positions.length === 0
+            ? null
+            : complete.reduce((sum, position) => sum + position.realisedPnlUsd, 0),
+        positionsClosed: closed.length,
+        positionsInTheRed:
+          positions.length === 0
+            ? null
+            : complete.filter((position) => position.realisedPnlUsd < 0).length,
       },
       tokens: [],
       counterparties: [],
-      coverage: this.#coverage(scan, cost, {
+      coverage: this.#coverage(source, scan, cost, {
         losingPositions: 0,
         poolsIncomplete: 0,
         excluded,
@@ -371,6 +622,7 @@ export class TraceService {
         positionsAttributed: null,
         legsSkipped: null,
         legsWithUnknownFees: null,
+        poolSwapsUnpriced: null,
       }),
       notes,
       elapsedMs: Date.now() - startedAt,
@@ -471,6 +723,108 @@ function tallyExclusions(positions: readonly Position[]): Record<string, number>
 /** Agreement for a count, so a note does not read "1 sells were read". */
 function plural(count: number, one: string, many: string): string {
   return count === 1 ? one : many;
+}
+
+/**
+ * Why the entry legs are missing, ranked by what this trace actually measured.
+ *
+ * The note this replaces named two causes in a fixed order and led with the
+ * bot one — while printing `0 such swaps were seen`, its own evidence against
+ * itself, in the same sentence. Worse, it never mentioned the lookback at all,
+ * which is the likeliest cause by some distance: a wallet that bought before
+ * the window and sold inside it produces exactly this shape, and the crawl
+ * stopping at `lookback_cutoff` says so outright. Ordering by evidence is the
+ * difference between a diagnosis and a list of things it could be.
+ */
+interface CrawlReach {
+  readonly lookbackDays: number;
+  readonly maxSignatures: number;
+  /** Wall clock the scan actually took, for the rate it actually got. */
+  readonly elapsedMs: number;
+  /** Wall clock the wallet crawl is allowed, or null when it is unbounded. */
+  readonly walletTimeBudgetMs: number | null;
+}
+
+/**
+ * How far back a wider window could reach, bounded by *both* budgets.
+ *
+ * The signature ceiling alone is the wrong answer and a dangerous one: a quiet
+ * wallet against a large ceiling divides out to years, and following that
+ * advice sets a window the clock cannot cover, so the trace comes back cut
+ * short — with less history than the setting it started from. Every transaction
+ * costs a `getTransaction`, and the rate that call actually achieves is a
+ * property of the endpoint, not of the config. This trace just measured it, so
+ * that is the number used rather than `SOLANA_RPC_MAX_RPS`, which is a ceiling
+ * a throttled provider ignores.
+ */
+function reachableDays(read: number, reach: CrawlReach): number {
+  if (read <= 0) return reach.lookbackDays;
+  const perDay = read / reach.lookbackDays;
+
+  const byBudget = reach.maxSignatures / perDay;
+  if (reach.walletTimeBudgetMs === null) return Math.floor(byBudget);
+
+  // Floored at a millisecond rather than skipped: a scan too fast to measure is
+  // a fast endpoint, and dropping the clock bound there would let a zero time
+  // budget report the signature ceiling as if it were reachable.
+  const transactionsPerMs = read / Math.max(1, reach.elapsedMs);
+  const byClock = (transactionsPerMs * reach.walletTimeBudgetMs) / perDay;
+  return Math.floor(Math.min(byBudget, byClock));
+}
+
+function missingBuyLegCauses(scan: WalletScan, reach: CrawlReach): string[] {
+  const causes: string[] = [];
+  const lookbackDays = reach.lookbackDays;
+
+  if (scan.stoppedAt === 'lookback_cutoff') {
+    const read = scan.cost.transactionsFetched;
+    const reachable = reachableDays(read, reach);
+    const oldest = new Date((scan.oldestTs ?? 0) * 1000).toISOString().slice(0, 10);
+    const head = `The crawl stopped at the ${lookbackDays}-day lookback with history still behind it, so the simplest explanation is also the likeliest: the buys are older than the window. Nothing before ${oldest} was read at all.`;
+
+    causes.push(
+      reachable > lookbackDays
+        ? `${head} This wallet ran at ${read.toLocaleString('en-US')} transactions per ${lookbackDays} days, and at that density both the signature budget and the clock still cover about ${reachable.toLocaleString('en-US')} days — raise TRACE_LOOKBACK_DAYS to somewhere inside that and run it again before concluding anything else.`
+        : `${head} Widening the window is not free here: at the rate this scan actually achieved, ${lookbackDays} days already spends what the trace's clock allows, so a larger TRACE_LOOKBACK_DAYS would come back cut short rather than deeper. Raise SOLANA_RPC_MAX_RPS or API_TRACE_TIMEOUT_MS first, then widen it.`,
+    );
+  } else if (scan.stoppedAt === 'time_budget') {
+    /*
+     * The clock, which is the one case that names no setting worth changing.
+     *
+     * This arm used to be one sentence with no number in it, which left an
+     * operator with nothing to act on — while `reachableDays` sat two functions
+     * away holding exactly the arithmetic it needed. The rate is a property of
+     * the endpoint rather than of the config, and this scan just measured it,
+     * so what it can afford is a measurement rather than a guess.
+     */
+    const read = scan.cost.transactionsFetched;
+    const afford = reachableDays(read, reach);
+    const unread =
+      scan.transactionsUnread > 0
+        ? ` ${scan.transactionsUnread.toLocaleString('en-US')} transactions it had already found were left unopened.`
+        : '';
+
+    causes.push(
+      `The crawl ran out of time before it reached the ${lookbackDays}-day cutoff, so the older half of this wallet — most likely including the buys — was never read.${unread} At the rate this endpoint actually answered, a trace of this length covers about ${afford.toLocaleString('en-US')} days of this wallet. Raising TRACE_LOOKBACK_DAYS will not help while that is true; more RPC throughput (SOLANA_RPC_MAX_RPS, or more endpoints in SOLANA_RPC_URL) or a longer API_TRACE_TIMEOUT_MS will, and indexing the wallet sidesteps the clock entirely.`,
+    );
+  } else if (scan.stoppedAt === 'signature_budget') {
+    const read = scan.cost.transactionsFetched;
+    causes.push(
+      `The crawl stopped at its ${reach.maxSignatures.toLocaleString('en-US')}-signature ceiling after reading ${read.toLocaleString('en-US')}, before it reached the ${lookbackDays}-day cutoff, so older history — including, most likely, the buys — was never read. TRACE_MAX_SIGNATURES is the setting, and API_TRACE_TIMEOUT_MS has to be able to afford whatever it is raised to.`,
+    );
+  }
+
+  if (scan.foreignSwaps > 0) {
+    causes.push(
+      `${scan.foreignSwaps} ${plural(scan.foreignSwaps, 'swap', 'swaps')} in this wallet's own transactions were executed by a different address. Both venues name the trader inside their own event rather than the fee payer, so entries placed through Axiom, Photon, BullX or Trojan land under the bot's address; if that count is large, it names the address worth tracing instead.`,
+    );
+  }
+
+  causes.push(
+    `The other possibility is a venue with no parser here. This build reads ${PARSED_VENUES.join(' and ')} and nothing else, so a buy filled on Raydium, Meteora or anywhere further afield is invisible to it — as are tokens that arrived by transfer rather than by purchase.`,
+  );
+
+  return causes;
 }
 
 /** Buy legs grouped by the pool whose history has to be crawled for them. */

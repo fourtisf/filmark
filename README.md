@@ -75,7 +75,7 @@ for the budgets that produce it.
 node scripts/trace-check.mjs <WALLET>          # --url for a remote API
 ```
 
-It prints the census, the skips and a sentence saying which of the five
+It prints the census, the skips and a sentence saying which of the six
 outcomes happened and what to do about it. `curl | grep` is the wrong tool
 here — a refused address returns a body with none of the fields being grepped
 for, so the pipeline prints nothing and a rejection is indistinguishable from a
@@ -89,6 +89,143 @@ bot: both venues name the trader inside their own event, never the fee payer, so
 entries placed through Axiom, Photon, BullX or Trojan land under the bot's
 address. `coverage.foreignSwaps` counts exactly those, and a large value there
 names the address worth tracing instead. See DECISIONS.md.
+
+**Then `coverage.swapsUnpriced`.** Cost basis is a dollar figure, so a swap with
+no price makes its position `unpriced`, and attribution drops every one of those.
+A trace whose swaps were all unpriceable therefore _arrives_ at "nothing closed
+in the red" — a statement about the wallet manufactured by an outage at Pyth. It
+returns `unpriced_history` instead, and `coverage.priceSeries` says what minutes
+the service actually holds. Nothing about the wallet has to change for this to
+clear; retrying once the feed answers does it.
+
+**And `coverage.stoppedOnTimeBudget`.** A trace is bounded twice: in RPC calls by
+the `TRACE_*` ceilings, and in wall clock by `API_TRACE_TIMEOUT_MS`. The clock is
+the one that moves when a provider throttles. When it is what ended the crawl the
+trace still answers — with `transactionsUnread` saying what it did not reach —
+rather than being cut off with nothing. If the flag is set on ordinary wallets,
+the endpoint is slower than the budget assumes and raising the ceilings makes it
+worse.
+
+> **If anything proxies this API, keep `API_TRACE_TIMEOUT_MS` under the proxy's
+> own response timeout** (Cloudflare's is 100s and not configurable below
+> Enterprise). Past it the proxy answers with an HTML error page in place of the
+> trace, which is not JSON and did not come from here; the console names that
+> case separately rather than blaming the engine.
+
+### Deploying
+
+```bash
+scripts/deploy.sh                  # build, publish the console, restart, verify
+scripts/deploy.sh <WALLET>         # the same, then index that wallet and trace it
+```
+
+Nine commands across three systems — the repo, nginx and PM2 — and most of them
+have a way to look like they worked while leaving the site on an older build.
+The script reads the site root and the API url out of the vhost rather than
+guessing (this site's root is `/var/www/html`, which reads like a throwaway
+default and is not), stops on the first thing that is not true, and verifies the
+_contents_ of the live page rather than its API url — the url was already right
+on the build being replaced, so it proves nothing about which build is serving.
+
+### Answering from the index
+
+A live trace is one `getTransaction` per signature, so a wallet's year is a few
+thousand RPC calls against a per-second allowance — no arrangement of the crawl
+makes that a web request, and `coverage.stoppedOnTimeBudget` is what a wallet too
+deep for one looks like. The same work done once, by a backfill nobody is waiting
+on, is a query:
+
+```bash
+pnpm migrate                                                    # ClickHouse schema
+pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts \
+  backfill <WALLET> --days 365                                  # minutes, no browser waiting
+API_USE_INDEX=true                                              # then restart the API
+```
+
+A backfill records the window it covered in `wallet_coverage`, and the API reads
+that before it reads the rows — `swaps` alone cannot tell a wallet that never
+traded from one nobody has indexed, and serving the first answer for the second
+is a fabricated finding. A wallet with no coverage row, or whose coverage is
+narrower or staler than the request, falls through to the live crawl silently.
+`coverage.source` says which of the two answered, every time.
+
+The index reads the whole window it covers, not the window the crawl was sized
+for. `TRACE_LOOKBACK_DAYS` is a budget for the live path — one `getTransaction`
+per signature inside a request — and a ClickHouse read costs the same query at
+any depth. Applying that budget to the index threw away history a backfill had
+already paid for, at the older end, which is exactly where a wallet's entry legs
+are; a wallet indexed for 365 days and read back through a 90-day budget came out
+as sells with no buys.
+
+### The wallets nobody asked for by hand
+
+Running that command per wallet does not scale past the wallets the operator
+personally knows about, and everybody else gets the dead end. So the API asks
+for them itself:
+
+```bash
+API_USE_INDEX=true                                              # both halves
+pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts worker  # keep it running
+```
+
+A trace that was shaped by a budget rather than by the wallet — cut short by the
+clock, stopped at the signature ceiling, or landing between a wallet's buys and
+its sells — writes a row to `wallet_index_requests`. The worker drains that list
+one wallet at a time, because the RPC allowance is shared with the API serving
+live visitors, and the next trace of that wallet is answered from the index.
+`scripts/deploy.sh` starts the worker under PM2, so this is one setup step
+rather than one command per wallet.
+
+There is no claim, no lease and no status column. The outstanding work is the
+requests `wallet_coverage` does not yet satisfy — a join — so the worker can
+crash mid-job, restart, or run twice without corrupting anything. Two settings
+govern it: `INDEX_REQUEST_DAYS` (how much history to ask for; larger than
+`TRACE_LOOKBACK_DAYS` on purpose, since a backfill has no request to fit inside)
+and `INDEX_REQUEST_STALENESS_SEC` (when a covered wallet is worth re-reading).
+
+`coverage.deepReadRequested` is true only when the row was actually written, and
+the console tells the visitor to come back only then — a queue place nobody
+wrote down would be a claim the data does not support.
+
+### More than one RPC endpoint
+
+`SOLANA_RPC_URL` takes a comma-separated list, and usually should. A rate limit
+belongs to a key, so two endpoints are two allowances that add up rather than
+compete, and a key that exhausts its monthly credit mid-crawl takes its own
+traffic down instead of the whole service. The client sends each call to
+whichever endpoint can take it soonest, slows one that answers `429`, sets aside
+one that answers `401`, and returns to both when they recover — all of it named
+in the log, none of it in the response body, because the URL carries the key.
+
+Every endpoint has to serve `getSignaturesForAddress` as deep as
+`TRACE_LOOKBACK_DAYS`. A pruning endpoint does not error; it quietly shortens the
+window, which `coverage.crawlStoppedAt` will report as `end_of_history`.
+
+### Restarting it
+
+A trace holds its socket open for as long as its RPC calls take, which is
+minutes, so the service waits up to ten seconds on `SIGTERM` for the ones in
+flight before it lets go. A process manager has to be told to allow that. PM2
+kills 1.6 seconds after the signal by default, well inside a trace, so a deploy
+during one takes it down and the browser that asked for it is told the engine
+did not answer — a phantom fault, produced by the deploy rather than found by
+it. Give it room:
+
+```js
+// ecosystem.config.cjs
+module.exports = {
+  apps: [
+    {
+      name: 'fillmark-api',
+      script: 'apps/api/dist/main.js',
+      kill_timeout: 12000,
+    },
+  ],
+};
+```
+
+The same applies while diagnosing: a restart cancels whatever is running, so let
+a trace finish before deploying over it.
 
 ### Cost
 

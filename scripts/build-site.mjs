@@ -15,6 +15,7 @@
  *   dist/app/index.html        ->  /app/
  */
 import { cp, mkdir, readFile, rm, writeFile, readdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -83,14 +84,41 @@ for (const [from, to] of PAGES) {
  * nothing.
  */
 function withApiUrl(html, target) {
-  if (target !== 'app/index.html' || API_URL === '') return html;
+  if (target !== 'app/index.html') return html;
+
+  const stamped = withBuildId(html);
+  if (API_URL === '') return stamped;
 
   const tag = /<meta\s+name="fillmark:api"\s+content="[^"]*"\s*\/?>/i;
-  if (!tag.test(html)) {
+  if (!tag.test(stamped)) {
     console.error('  app/index.html has no <meta name="fillmark:api"> to fill in');
     process.exit(1);
   }
-  return html.replace(tag, `<meta name="fillmark:api" content="${API_URL}">`);
+  return stamped.replace(tag, `<meta name="fillmark:api" content="${API_URL}">`);
+}
+
+/**
+ * Stamps the page with a hash of its own source, so a deploy can ask the live
+ * site which build it is serving.
+ *
+ * The check this replaces grepped the live page for a string introduced by
+ * whichever console change was most recent, which passes for every build from
+ * that change onwards — including the stale one it was meant to catch. A stale
+ * console is indistinguishable from a broken engine from the outside, and
+ * telling those apart by hand cost a very long day. Hashed before the API url
+ * is written in, so the same source deployed against two hosts has one id.
+ */
+export function buildId(html) {
+  return createHash('sha256').update(html).digest('hex').slice(0, 12);
+}
+
+function withBuildId(html) {
+  const tag = /<meta\s+name="fillmark:build"\s+content="[^"]*"\s*\/?>/i;
+  if (!tag.test(html)) {
+    console.error('  app/index.html has no <meta name="fillmark:build"> to stamp');
+    process.exit(1);
+  }
+  return html.replace(tag, `<meta name="fillmark:build" content="${buildId(html)}">`);
 }
 
 for (const asset of ASSETS) {

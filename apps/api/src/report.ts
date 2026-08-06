@@ -27,8 +27,31 @@ export type TraceStatus =
    * the red" states a result the data cannot support — §7.1.
    */
   | 'unreadable_history'
+  /**
+   * The swaps were read but none of them could be given a USD price.
+   *
+   * Also distinct from `no_losses`, and for the same reason. Cost basis is a
+   * dollar figure; with no price series behind it every position comes out
+   * `unpriced`, attribution drops all of them, and the trace lands on "nothing
+   * closed in the red" — a statement about the wallet caused by an outage at
+   * the oracle. The wallet is not the thing that failed here, and saying so is
+   * the difference between a user retrying in ten minutes and one concluding
+   * the product does not work.
+   */
+  | 'unpriced_history'
   /** Losses, but no window produced an eligible counterparty. */
   | 'no_attribution';
+
+/**
+ * Which half of the system answered.
+ *
+ * `live` crawled the chain on this request, bounded by the clock and by an RPC
+ * allowance. `index` read swaps a backfill had already written, which costs no
+ * RPC and covers the whole window rather than as much of it as a request had
+ * time for. The figures mean the same thing either way; what they cost, and how
+ * complete they are, does not — so the reader is told.
+ */
+export type TraceSource = 'live' | 'index';
 
 export interface TraceWindowRef {
   readonly mint: string;
@@ -63,22 +86,43 @@ export interface TraceToken {
   readonly positions: number;
 }
 
+/**
+ * The figures. Null everywhere attribution never ran, never zero.
+ *
+ * The four below used to be hardcoded zeros on every path that stopped before
+ * attribution — so a trace that refused to answer still reported
+ * `attributedUsd: 0`, and the page printed `$0` beside it as though it were a
+ * measurement. Worse on `no_losses`, where the positions HAD been accounted and
+ * `realisedPnlUsd: 0` overwrote a real figure: a wallet that closed ten
+ * profitable positions was shown a flat zero. That is §7.4 exactly — a constant
+ * wearing the clothes of a finding — one block below where the same fault was
+ * already fixed in `coverage`.
+ */
 export interface TraceTotals {
-  /** Sum of every attribution row. The headline figure. */
-  readonly attributedUsd: number;
+  /** Sum of every attribution row. The headline figure. Null if it never ran. */
+  readonly attributedUsd: number | null;
   /** Loss whose windows produced nothing. Never folded into `attributedUsd`. */
-  readonly unattributedUsd: number;
+  readonly unattributedUsd: number | null;
   /** Realised loss across the positions attribution ran on. */
-  readonly realisedLossUsd: number;
-  /** Realised PnL across every closed position with a complete basis. */
-  readonly realisedPnlUsd: number;
+  readonly realisedLossUsd: number | null;
+  /** Counterparties found. Null when attribution never ran; 0 is a finding. */
+  readonly counterparties: number | null;
+  readonly largestCounterpartyUsd: number | null;
+  /**
+   * Realised PnL across every closed position with a complete basis.
+   *
+   * Measured on every path that got as far as accounting positions, because it
+   * does not need attribution — only a basis. Null only when there were no
+   * swaps to account at all.
+   */
+  readonly realisedPnlUsd: number | null;
   readonly positionsClosed: number;
-  readonly positionsInTheRed: number;
-  readonly counterparties: number;
-  readonly largestCounterpartyUsd: number;
+  readonly positionsInTheRed: number | null;
 }
 
 export interface TraceCoverage {
+  /** Whether the chain was crawled for this trace, or the index read. */
+  readonly source: TraceSource;
   readonly lookbackDays: number;
   /** Venues with a parser. Anything traded elsewhere is invisible to this. */
   readonly venues: readonly string[];
@@ -102,8 +146,63 @@ export interface TraceCoverage {
    * event names a different trader, and only the event is authoritative.
    */
   readonly foreignSwaps: number;
+  /**
+   * The wallet's own swaps that got no USD price.
+   *
+   * Read beside `swapCensus`: equal counts mean nothing in this trace has a
+   * dollar figure behind it, and every "no loss" below is an artefact of that
+   * rather than a measurement.
+   */
+  readonly swapsUnpriced: number;
+  /** Pool swaps in the netting windows with no price. Null when netting never ran. */
+  readonly poolSwapsUnpriced: number | null;
+  /**
+   * The SOL/USD minute series the service actually holds, or null when it holds
+   * none. A trace whose window sits outside this range cannot be priced.
+   */
+  readonly priceSeries: {
+    readonly fromTs: number;
+    readonly toTs: number;
+    readonly minutes: number;
+  } | null;
   /** True when the signature budget ran out before the lookback window did. */
   readonly historyTruncated: boolean;
+  /**
+   * Why the wallet crawl stopped. Only `end_of_history` means nothing was left.
+   *
+   * `lookback_cutoff` is the one that reads as success and is not: the crawl
+   * did what it was told and stopped at `lookbackDays`, and everything older
+   * than that is invisible to the trace. A wallet that bought outside the
+   * window and sold inside it therefore comes back as sells with no buys, which
+   * looks exactly like a broken read. It is the first thing to check before
+   * blaming a parser or a bot.
+   */
+  readonly crawlStoppedAt:
+    'end_of_history' | 'lookback_cutoff' | 'signature_budget' | 'time_budget';
+  /**
+   * True when the trace's *time* budget, not a call ceiling, ended the crawl.
+   *
+   * The two are different diagnoses. A call ceiling is a configured limit doing
+   * its job; a clock that ran out means the RPC endpoint is answering slower
+   * than the budget assumed, and raising the ceilings would make it worse.
+   */
+  readonly stoppedOnTimeBudget: boolean;
+  /** Signatures reached but never fetched, because the clock ran out first. */
+  readonly transactionsUnread: number;
+  /**
+   * True when this trace queued a full read of the wallet, out of band.
+   *
+   * A live crawl is one `getTransaction` per signature inside a web request,
+   * and for an active wallet's year that arithmetic does not close at any
+   * setting. When a trace was shaped by a budget rather than by the wallet, the
+   * finding is turned into a request for a backfill — which has no browser
+   * waiting on it — and the next trace is answered from the index.
+   *
+   * Only true when the request was actually recorded. The page tells the
+   * visitor to come back, and a promise nobody wrote down would be a claim the
+   * data does not support (§7.1).
+   */
+  readonly deepReadRequested: boolean;
   /** Losing positions found. Always measured. */
   readonly losingPositions: number;
   /**

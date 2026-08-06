@@ -113,22 +113,107 @@ export interface BackfillOptions extends BackfillRequest {
 export async function backfill(
   services: Services,
   options: BackfillOptions,
-): Promise<BackfillResult> {
-  const runner = createBackfillRunner(services);
+): Promise<BackfillResult & { pricesReady: boolean }> {
   const controller = shutdownSignal(services.logger);
+  return runBackfill(services, createBackfillRunner(services), options, controller.signal);
+}
 
+/**
+ * One whole backfill: fill the prices, crawl, flush, record the coverage.
+ *
+ * Extracted from the command because the queue worker used to call
+ * `runner.run` on its own, which does the crawl and none of the rest. Rows
+ * landed in ClickHouse and no `wallet_coverage` row was ever written, so the
+ * index refused to answer for every wallet the queue had indexed — a backfill
+ * that worked perfectly and changed nothing anybody could see. Two callers, one
+ * definition of what a backfill is.
+ *
+ * Takes a signal rather than installing its own handlers: a worker owns process
+ * lifetime for many jobs, and one `shutdownSignal` per job leaks a listener
+ * apiece until Node starts warning about it.
+ */
+export async function runBackfill(
+  services: Services,
+  runner: BackfillRunner,
+  options: BackfillOptions,
+  signal: AbortSignal,
+): Promise<BackfillResult & { pricesReady: boolean }> {
   const fromSec =
     options.fromSec ?? nowSeconds() - daysToSeconds(services.config.BACKFILL_DEFAULT_DAYS);
 
+  /*
+   * True only when this run actually filled the series across the window.
+   *
+   * It used to start at `true` whenever `--no-prices` was passed, on the
+   * reasoning that an operator who skips the fill must have filled it already.
+   * That is an assumption stored as a measurement (§7.1) — and it is stored in
+   * the same row a reader consults to decide whether the index can be trusted.
+   * Skipping the fill is not evidence about prices in either direction, so the
+   * claim is not made. What a swap was actually worth is measured off the rows
+   * themselves and reported as `swapsUnpriced`; that is the number to read.
+   */
+  let pricesReady = false;
   if (options.withPrices !== false) {
-    // Priced rows require the series to already cover the window; doing it
-    // after the crawl would leave every row written unpriced.
-    await services.prices.ensureRange(fromSec, nowSeconds(), controller.signal);
+    const budget = AbortSignal.timeout(services.config.BACKFILL_PRICE_TIMEOUT_MS);
+    try {
+      // Priced rows require the series to already cover the window; doing it
+      // after the crawl would leave every row written unpriced.
+      //
+      // Bounded, because Benchmarks meters over a window and answers
+      // `Retry-After: 59` on each one it refuses. A year is 106 windows, so a
+      // client that obeys literally spends hours before a single transaction
+      // is read — which looks exactly like a hung backfill.
+      await services.prices.ensureRange(fromSec, nowSeconds(), AbortSignal.any([signal, budget]));
+      pricesReady = true;
+    } catch (error) {
+      /*
+       * A price feed that refuses must not cost the crawl.
+       *
+       * It did: `ensureRange` threw before a single transaction was read, so a
+       * year-long backfill against a rate-limited Benchmarks wrote nothing at
+       * all. Unpriced rows are the lesser loss by a wide margin — an unpriced
+       * swap is still a real swap — and both tables are `ReplacingMergeTree`
+       * keyed on the swap's own identity, so re-running once the feed recovers
+       * replaces these rows rather than duplicating them. Whatever minutes Pyth
+       * did hand over are already stored, so each run converges.
+       */
+      services.logger.warn(
+        { err: describeError(error), ranOutOfTime: budget.aborted },
+        'the SOL/USD series was not filled across the whole window; crawling anyway. Swaps landing in minutes the series does reach are still priced, the rest are written unpriced. Re-run this backfill later and those rows are replaced with priced ones',
+      );
+    }
   }
 
-  const result = await runner.run({ ...options, fromSec }, controller.signal);
+  const result = await runner.run({ ...options, fromSec }, signal);
   await services.writer.flush();
-  return result;
+
+  /*
+   * Record what this run covered, so a reader can tell empty from unread.
+   *
+   * Written after the flush, and only when the crawl covered the window it was
+   * asked for: a run cut short covers less than its window claims, and a
+   * coverage row is a promise that the index can answer for this wallet over
+   * this range. A wallet with zero swaps still gets a row — that is a real
+   * answer, and the whole point is to stop it looking like an unread one.
+   *
+   * "Covered" includes running out of wallet before running out of window,
+   * which is the common case for anything younger than the lookback. Requiring
+   * a signature older than the cutoff meant those wallets recorded nothing at
+   * all, and — now that the API queues wallets itself — would have put one on
+   * the queue permanently, indexed on every pass and never satisfied by any of
+   * them.
+   */
+  if (result.coveredWindow) {
+    await services.walletCoverage.record({
+      wallet: options.address,
+      fromTs: fromSec,
+      toTs: nowSeconds(),
+      swaps: result.swapsWritten,
+      pricesReady,
+    });
+  }
+
+  return { ...result, pricesReady };
 }
 
 export async function enqueue(services: Services, request: BackfillRequest): Promise<string> {
@@ -151,7 +236,9 @@ export async function worker(services: Services): Promise<void> {
 
   const backfillWorker = createBackfillWorker({
     connection,
-    runner,
+    // The same thing the CLI does, coverage row and all — otherwise a wallet
+    // this worker indexes is one the trace API still refuses to serve.
+    run: (request) => runBackfill(services, runner, request, controller.signal),
     concurrency: services.config.BACKFILL_CONCURRENCY,
     logger: services.logger,
   });
@@ -165,25 +252,111 @@ export async function worker(services: Services): Promise<void> {
     : null;
 
   services.logger.info(
-    { concurrency: services.config.BACKFILL_CONCURRENCY },
+    {
+      concurrency: services.config.BACKFILL_CONCURRENCY,
+      indexRequestPollMs: services.config.INDEX_REQUEST_POLL_MS,
+    },
     'backfill worker started',
   );
 
-  await new Promise<void>((resolve) => {
-    controller.signal.addEventListener(
-      'abort',
-      () => {
-        resolve();
-      },
-      { once: true },
-    );
-  });
+  await Promise.all([
+    new Promise<void>((resolve) => {
+      controller.signal.addEventListener(
+        'abort',
+        () => {
+          resolve();
+        },
+        { once: true },
+      );
+    }),
+    drainIndexRequests(services, runner, controller.signal),
+  ]);
 
   // Let in-flight jobs finish before the connection goes away, or they are
   // retried from the start on the next boot.
   await backfillWorker.close();
   await connection.quit();
   server?.close();
+}
+
+/**
+ * Reads the wallets the trace API could not answer, and pays for them properly.
+ *
+ * This is the half that removes the ritual. Indexing used to mean an operator
+ * running a command per wallet on a server, which does not scale past the
+ * wallets that operator personally knows about — and every other visitor got
+ * the dead end instead. The API now writes down the wallets it failed on, and
+ * this drains that list on a timer.
+ *
+ * Sequential on purpose. A backfill is thousands of `getTransaction` calls, and
+ * the RPC allowance is shared with the trace API serving live visitors; running
+ * several of these at once would take the site down to fill a queue faster than
+ * anybody is reading it. One at a time, forever, is the correct rate.
+ */
+async function drainIndexRequests(
+  services: Services,
+  runner: BackfillRunner,
+  signal: AbortSignal,
+): Promise<void> {
+  const { config, logger } = services;
+
+  while (!signal.aborted) {
+    try {
+      const pending = await services.indexRequests.pending({
+        limit: 1,
+        stalenessSec: config.INDEX_REQUEST_STALENESS_SEC,
+      });
+
+      const next = pending[0];
+      if (next !== undefined) {
+        logger.info(
+          { wallet: next.wallet, days: next.days, reason: next.reason },
+          'indexing a wallet the trace API could not read inside a request',
+        );
+        const result = await runBackfill(
+          services,
+          runner,
+          { address: next.wallet, fromSec: nowSeconds() - daysToSeconds(next.days) },
+          signal,
+        );
+        logger.info(
+          { wallet: next.wallet, swaps: result.swapsWritten, pricesReady: result.pricesReady },
+          'wallet indexed; the next trace of it is answered from the index',
+        );
+        // Straight back round rather than sleeping: the coverage row this just
+        // wrote is what takes it off the pending list, so the next query
+        // returns the wallet behind it.
+        continue;
+      }
+    } catch (error) {
+      /*
+       * A failing wallet must not stop the drain.
+       *
+       * Nothing is marked done and nothing is marked failed — the pending list
+       * is a join against coverage, so a wallet that throws is simply still
+       * outstanding and comes round again. The sleep below is what keeps a
+       * permanently broken one from spinning.
+       */
+      logger.warn({ err: describeError(error) }, 'index request failed; it stays outstanding');
+    }
+
+    await sleep(config.INDEX_REQUEST_POLL_MS, signal);
+  }
+}
+
+/** Resolves after `ms`, or as soon as the signal aborts. Never rejects. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 export interface PricesOptions {

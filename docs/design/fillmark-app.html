@@ -29,6 +29,12 @@
      console, and every surface below says so rather than answering from demo
      data. `node scripts/build-site.mjs` fills it in from FILLMARK_API_URL. -->
 <meta name="fillmark:api" content="">
+<!-- Filled in at build time with a hash of this file's contents. A deploy can
+     then ask the live page which build it is serving, instead of grepping for
+     a feature string that was already present in the build it is replacing —
+     which is how a stale console twice passed verification and cost a day
+     being mistaken for a broken engine. -->
+<meta name="fillmark:build" content="">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -231,6 +237,12 @@ h1 em{font-style:normal;font-weight:300;color:var(--text3)}
 .cov-g div{padding:20px 18px;background:var(--void)}
 .cov-g b{display:block;font-family:var(--mono);font-size:13px;font-weight:400;margin-top:9px;
   word-break:break-word}
+/* The one line on a failed trace that is an instruction rather than a
+   diagnosis, so it does not read as another entry in the list of things that
+   went wrong. */
+.queued{border-left:2px solid var(--text2);padding:14px 0 14px 16px;font-weight:300;
+  font-size:14px;color:var(--text2)}
+.queued b{font-weight:500;color:var(--text)}
 .cov-n{list-style:none;margin-top:26px;border-top:1px solid var(--line)}
 .cov-n li{padding:16px 8px;border-bottom:1px solid var(--line);color:var(--text2);
   font-weight:300;font-size:14px;display:flex;gap:14px}
@@ -593,11 +605,15 @@ const FEED=[
 
 /* ── helpers ──────────────────────────── */
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const usd=n=>"$"+Math.round(Math.abs(n)).toLocaleString("en-US");
+/* Null is not zero, and the difference is the whole point. A trace that stopped
+   before attribution reports null for every figure attribution would have
+   produced; printing "$0" there would be a constant wearing the clothes of a
+   measurement, which is exactly what the engine stopped doing. */
+const usd=n=>n===null||n===undefined?"—":"$"+Math.round(Math.abs(n)).toLocaleString("en-US");
 /* The sign goes in front of the dollar sign, not between it and the digits.
    `$-7,200` reads as a typo; realised PnL is the one figure here that is
    routinely negative and routinely positive, so it needs both forms. */
-const signedUsd=n=>(Math.round(n)<0?"−":"")+usd(n);
+const signedUsd=n=>n===null||n===undefined?"—":(Math.round(n)<0?"−":"")+usd(n);
 let M=null, ACTIVE=null, PINNED=new Set([0,1,2]);
 
 /* ── the engine, if there is one ──────── */
@@ -616,6 +632,10 @@ const API=(()=>{
   return (override||meta).replace(/\/+$/,"");
 })();
 const LIVE=API!=="";
+
+/* Longer than any trace the engine will run, short enough that a request
+   nothing is going to answer stops looking like a slow one. */
+const TRACE_CLIENT_TIMEOUT_MS=210_000;
 
 /* Token symbols reach this page from on-chain metadata, which is to say from
    whoever deployed the token. They are rendered into SVG labels and into ledger
@@ -859,29 +879,75 @@ async function traceLive(v){
   tick();
   const timer=setInterval(tick,1000);
 
+  /* A request with no client-side limit is one that can sit on this line
+     forever. The engine's own budget is minutes at the outside, so anything
+     past that is not a slow trace — it is a request nothing is going to answer,
+     and saying so beats a counter that keeps climbing. */
+  const abort=new AbortController();
+  const giveUp=setTimeout(()=>abort.abort(),TRACE_CLIENT_TIMEOUT_MS);
+
   try{
     const res=await fetch(`${API}/v1/trace/${encodeURIComponent(v)}`,
-      {headers:{accept:"application/json"}});
-    const body=await res.json().catch(()=>null);
+      {headers:{accept:"application/json"},signal:abort.signal});
+    /* A proxy or CDN in front of the API answers with its own HTML on a
+       timeout, and that is not a trace failing — it is a trace that never
+       reached the engine. Keeping the two apart is the difference between
+       "retry" and "look at your reverse proxy". */
+    const text=await res.text().catch(()=>"");
+    let body=null;
+    try{body=JSON.parse(text)}catch{body=null}
+    if(body===null&&text!==""){gatewayError(res.status,v);return}
     if(!res.ok){apiError(res.status,body,v);return}
     renderReport(body);
-  }catch{
-    setState("Trace failed · <i>the engine did not answer</i>");
-    nothing("Unreachable","The trace engine did not answer.",
-      `<p style="margin-top:16px">The console reached for it and got nothing back. It may
-       be restarting, or this browser may not be on its allowed origins. Nothing is shown
-       rather than something guessed.</p>`,v);
-  }finally{clearInterval(timer);busy=false;$("#go").disabled=false}
+  }catch(e){
+    const timedOut=e&&e.name==="AbortError";
+    setState(`Trace failed · <i>${timedOut?"no answer in time":"the engine did not answer"}</i>`);
+    nothing(timedOut?"No answer":"Unreachable",
+      timedOut?"The engine did not answer in time."
+             :"The trace engine could not be reached.",
+      timedOut
+        ? `<p style="margin-top:16px">The request was still open after
+           ${Math.round(TRACE_CLIENT_TIMEOUT_MS/1000)} seconds and was given up on. A trace is
+           bounded well inside that, so this is a request that is not going to be answered rather
+           than a wallet that is slow to read.</p>`
+        : `<p style="margin-top:16px">The console reached for it and got nothing back. Either the
+           engine is down or restarting, or this page's origin
+           (<code>${esc(location.origin)}</code>) is not in the engine's allowed origins, in which
+           case the browser blocks the reply before this page ever sees it. Nothing is shown rather
+           than something guessed.</p>`,v);
+  }finally{clearTimeout(giveUp);clearInterval(timer);busy=false;$("#go").disabled=false}
 }
 
 function apiError(status,body,v){
   const msg=body&&typeof body.message==="string"?body.message:"the trace could not be completed";
   setState(`Trace failed · <i>${esc(msg)}</i>`);
+  /* Keyed on the error name before the status, because one status covers more
+     than one thing: 503 is both a queue that is full and an upstream that is
+     throttling us, and those are the reader's problem and ours respectively. */
+  const byError={
+    rpc_rate_limited:"The chain endpoint is throttling this service.",
+    rpc_rejected:"This service's chain access was refused.",
+    busy:"The engine is busy right now.",
+    timeout:"That wallet took longer to read than a trace allows.",
+  };
   const heads={400:"That is not a Solana address.",502:"The Solana endpoint did not answer.",
     503:"The engine is busy right now.",504:"That wallet took longer to read than a trace allows."};
-  nothing("No result",heads[status]??"The trace could not be completed.",
+  const head=(body&&byError[body.error])??heads[status]??"The trace could not be completed.";
+  nothing("No result",head,
     `<p style="margin-top:16px">${esc(msg)}. Nothing is shown rather than something
      guessed.</p>`,v);
+}
+
+/* A reply that is not JSON did not come from the engine. Something in front of
+   it — a proxy, a CDN, a host error page — answered instead, and telling the
+   reader to retry would send them back into the same wall. */
+function gatewayError(status,v){
+  setState(`Trace failed · <i>answered by something other than the engine (HTTP ${status})</i>`);
+  nothing("No result","Something in front of the engine answered instead.",
+    `<p style="margin-top:16px">The reply to this trace was not JSON, so it did not come from the
+     trace API — a proxy, CDN or host error page returned HTTP ${status} in its place. A trace runs
+     for up to a couple of minutes, which is longer than most proxies wait by default, and that is
+     the usual reason. Nothing is shown rather than something guessed.</p>`,v);
 }
 
 /* Four outcomes, four different things to say. A wallet with no trades and a
@@ -901,12 +967,40 @@ const NO_RESULT={
     `<p style="margin-top:16px">Sells were found and no buys at all. A wallet cannot sell what
      it never bought, so this is not a quiet quarter — the read lost the entry legs, and every
      figure derived from it would be void.</p>
-     <p style="margin-top:14px">The usual cause is a trading bot. Both venues name the trader
-     inside their own event, never whoever paid the fee, so entries placed through Axiom,
-     Photon, BullX, Trojan or similar land under the bot's address instead of yours.
-     ${r.coverage.foreignSwaps} ${plural(r.coverage.foreignSwaps,"swap by another wallet was","swaps by other wallets were")}
-     seen inside this wallet's own transactions — if that number is large, trace that address
-     instead. The other possibility is that the buys happened on a venue with no parser yet.</p>`],
+     ${r.coverage.crawlStoppedAt==="lookback_cutoff"
+       ? `<p style="margin-top:14px">The likeliest reason is the window, not the wallet. The read
+          stopped at the ${r.coverage.lookbackDays}-day lookback with history still behind it, so a
+          position opened before ${when(r.coverage.fromTs).slice(0,6)} and closed after it shows only
+          its exit. That is a limit of this trace, not a fact about the address.</p>`
+       : r.coverage.crawlStoppedAt==="signature_budget"||r.coverage.crawlStoppedAt==="time_budget"
+       ? `<p style="margin-top:14px">The read ran out of
+          ${r.coverage.crawlStoppedAt==="time_budget"?"time":"budget"} before it reached the
+          ${r.coverage.lookbackDays}-day mark, so the older half of this wallet — most likely
+          including the entries — was never opened.</p>`
+       : ""}
+     ${r.coverage.foreignSwaps>0
+       ? `<p style="margin-top:14px">${r.coverage.foreignSwaps}
+          ${plural(r.coverage.foreignSwaps,"swap inside this wallet's own transactions was","swaps inside this wallet's own transactions were")}
+          executed by a different address. Both venues name the trader inside their own event,
+          never whoever paid the fee, so entries placed through Axiom, Photon, BullX or Trojan land
+          under the bot's address instead of yours — if that number is large, trace that one.</p>`
+       : ""}
+     <p style="margin-top:14px">Otherwise the buys were filled somewhere this build cannot read —
+     it parses ${esc(r.coverage.venues.join(" and "))} and nothing else — or the tokens arrived by
+     transfer rather than by purchase.</p>`],
+  unpriced_history:["Nothing here could be priced.",r=>
+    `<p style="margin-top:16px">${r.coverage.swapsUnpriced}
+     ${plural(r.coverage.swapsUnpriced,"swap was","swaps were")} read and not one of them could be
+     given a dollar value. Cost basis is a dollar figure, so with no prices there is no profit and
+     no loss to report — and "nothing closed in the red" would be a claim about this wallet caused
+     by a failure somewhere else entirely.</p>
+     <p style="margin-top:14px">The price feed is Pyth's SOL/USD minute series, which is upstream
+     of everything above and nothing to do with the address. ${!r.coverage.priceSeries
+       ? "The engine currently holds no price history at all."
+       : `The engine holds ${r.coverage.priceSeries.minutes.toLocaleString("en-US")} minutes,
+          ${when(r.coverage.priceSeries.fromTs)} to ${when(r.coverage.priceSeries.toTs)} — this
+          wallet's trades fall outside that.`} Trying again in a few minutes is the right
+     response.</p>`],
   no_attribution:["Losses found. Nobody to attribute them to.",()=>
     `<p style="margin-top:16px">Every wallet selling into those windows was filtered out — the
      trader itself, a bot round-tripping inventory, or a trade nothing could price. Nothing is
@@ -917,8 +1011,9 @@ function renderReport(r){
   ACTIVE=r.wallet;
   const outcome=NO_RESULT[r.status];
   if(outcome){
-    setState(`No counterparties · <i>${esc(r.status.replace(/_/g," "))}</i>`);
-    nothing("No counterparties",outcome[0],outcome[1](r)+coverageHtml(r),r.wallet);
+    setState(`No counterparties · <i>${esc(r.status.replace(/_/g," "))}</i>`
+      +(r.coverage.deepReadRequested?" · <i>deep read queued</i>":""));
+    nothing("No counterparties",outcome[0],outcome[1](r)+queuedHtml(r)+coverageHtml(r),r.wallet);
     $("#cov-sec").hidden=true;
     return;
   }
@@ -947,7 +1042,7 @@ function paint(m,note){
     : "Trace complete · <i>"+esc(note)+"</i>");
   PINNED=new Set(M.ranked.slice(0,3).map(p=>p.i));
 
-  if(m.report){$("#cov").innerHTML=coverageHtml(m.report);$("#cov-sec").hidden=false}
+  if(m.report){$("#cov").innerHTML=queuedHtml(m.report)+coverageHtml(m.report);$("#cov-sec").hidden=false}
   else $("#cov-sec").hidden=true;
   unlock();
 }
@@ -955,21 +1050,64 @@ function paint(m,note){
 /* Spec §7.1 and §7.2. Every figure above is bounded by something — a lookback,
    a venue list, a budget that ran out — and the bounds belong on the page with
    the figure, not in a footnote somebody has to go and find. */
+/* What the reader can do about a trace that ran out of road.
+   The outcome copy above says what went wrong and why, honestly, and then
+   used to stop — leaving a dead end whose real cause was a budget rather than
+   the wallet. The engine now pays for those wallets out of band, where no
+   browser is waiting, so the useful sentence is "come back". Rendered only
+   when the request was actually recorded: the API reports that separately
+   from having wanted to, because a queue place nobody wrote down is a promise
+   this page has no business making. */
+function queuedHtml(r){
+  if(!r.coverage.deepReadRequested)return "";
+  return `<p class="queued" style="margin-top:18px">
+    <b>This wallet is being read properly in the background.</b> The read above had a browser waiting
+    on it, so it stopped at the first budget it hit. The one now queued has nothing waiting on it and
+    covers the full history. Trace this wallet again in a few minutes and the answer comes from the
+    index instead of from as much of the chain as a request had time for.</p>`;
+}
+
 function coverageHtml(r){
   const c=r.coverage,t=r.totals;
+  /* The window that was read, which is not the window that was asked for the
+     moment a budget ends the crawl early. Printing the configured number there
+     is a setting wearing the clothes of a measurement — the same fault §7.4
+     forbids in the headline figure, one row further down the page. */
+  const daysRead=c.fromTs&&c.toTs?Math.max(1,Math.round((c.toTs-c.fromTs)/86400)):null;
+  const shortRead=daysRead!==null&&daysRead<c.lookbackDays*0.9;
   const facts=[
-    ["Window",`${c.lookbackDays} day lookback`],
+    /* Which half of the system answered. A trace read from the index costs no
+       RPC and covers the whole window; a live one covers as much of it as the
+       request had time for. Same figures, different confidence. */
+    ["Source",c.source==="index"?"swap index · no chain crawl":"live chain crawl"],
+    ["Window",shortRead
+      ? `${daysRead} days read of ${c.lookbackDays} asked for`
+      : `${c.lookbackDays} day lookback`],
     ["Venues read",c.venues.join(", ")],
     ["Transactions read",c.transactionsFetched.toLocaleString("en-US")],
     ["Positions attributed",c.positionsAttributed===null
       ? `— of ${c.losingPositions}`
       : `${c.positionsAttributed} of ${c.losingPositions}`],
+    ["Positions closed",String(t.positionsClosed)],
     ["Attributed",usd(t.attributedUsd)],
     ["Unattributed",usd(t.unattributedUsd)],
     ["Realised PnL",signedUsd(t.realisedPnlUsd)],
-    ["Scan time",(r.elapsedMs/1000).toFixed(1)+"s"],
+    ["Scan time",(r.elapsedMs/1000).toFixed(1)+"s"
+      +(c.stoppedOnTimeBudget?" · cut short by the clock":"")],
+    // Whether anything is being done about a read that fell short, so the row
+    // sits beside the figures that caused it rather than in a note below.
+    ["Deep read",c.deepReadRequested?"queued · retry in a few minutes"
+      :c.source==="index"?"not needed · answered from the index":"not needed"],
     ["Swaps read",Object.entries(c.swapCensus||{}).map(([k,v])=>`${k} ${v}`).join("  ")||"none"],
     ["Other wallets' swaps",String(c.foreignSwaps??0)],
+    // The three below used to be measured and never shown, which is how a
+    // pricing outage reached the page dressed as a wallet that never lost
+    // money. A figure that decides what the headline says belongs beside it.
+    ["Swaps unpriced",c.swapsUnpriced===undefined?"—"
+      :`${c.swapsUnpriced}${c.poolSwapsUnpriced?` · ${c.poolSwapsUnpriced} in pools`:""}`],
+    ["Positions excluded",Object.entries(c.excluded||{}).map(([k,v])=>
+      `${k.replace(/_/g," ")} ${v}`).join("  ")||"none"],
+    ["Parser refusals",Object.entries(c.parseSkips||{}).map(([k,v])=>`${k} ${v}`).join("  ")||"none"],
   ];
   return `<div class="cov-g">${facts.map(f=>
       `<div><div class="st-l">${esc(f[0])}</div><b>${esc(f[1])}</b></div>`).join("")}</div>`

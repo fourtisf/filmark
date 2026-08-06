@@ -12,6 +12,8 @@ const booleanish = z
 
 const port = z.coerce.number().int().min(1).max(65535);
 const positiveInt = z.coerce.number().int().positive();
+/** Rates are not always whole: a limit of one request every two seconds is 0.5. */
+const positiveNumber = z.coerce.number().positive();
 const nonNegativeInt = z.coerce.number().int().nonnegative();
 
 const configSchema = z.object({
@@ -51,6 +53,16 @@ const configSchema = z.object({
 
   PYTH_HERMES_URL: z.string().url().default('https://hermes.pyth.network'),
   PYTH_BENCHMARKS_URL: z.string().url().default('https://benchmarks.pyth.network'),
+  /**
+   * Requests a second to Pyth Benchmarks.
+   *
+   * It is a free public endpoint with no key, so the limit is shared with
+   * everyone else pointed at it, and a range of any size arrives as a series of
+   * 5,000-bar windows. A backfill fired them as fast as it could and was
+   * refused outright. Modest by default; raise it only if Benchmarks stops
+   * complaining.
+   */
+  PYTH_MAX_RPS: positiveNumber.default(3),
   /** Pyth SOL/USD price feed id, hex, no 0x prefix. */
   PYTH_SOL_USD_FEED_ID: z
     .string()
@@ -69,6 +81,16 @@ const configSchema = z.object({
   BACKFILL_SIGNATURE_PAGE_SIZE: z.coerce.number().int().min(1).max(1000).default(1000),
   /** Transactions fetched per batch inside a backfill job. */
   BACKFILL_TRANSACTION_BATCH: positiveInt.default(20),
+  /**
+   * Longest the SOL/USD fill may hold up a backfill before it crawls anyway.
+   *
+   * Benchmarks meters over a window and answers `Retry-After: 59`, and a year
+   * is 106 of those windows — obeyed literally that is hours of a backfill
+   * spent before a single transaction is read. The swaps are the part nobody
+   * can reconstruct later; prices are stored separately, replace in place, and
+   * every re-run resumes. So the crawl gets a bounded wait and then goes.
+   */
+  BACKFILL_PRICE_TIMEOUT_MS: positiveInt.default(300_000),
 
   METRICS_PORT: port.default(9464),
   METRICS_ENABLED: booleanish.default(true),
@@ -91,6 +113,41 @@ const configSchema = z.object({
   API_MAX_CONCURRENT_TRACES: positiveInt.default(2),
   /** Upper bound on a single trace, after which it fails rather than hangs. */
   API_TRACE_TIMEOUT_MS: positiveInt.default(180_000),
+  /**
+   * Serve a trace from the swap index when a backfill has covered the wallet.
+   *
+   * Off by default: an API pointed at a ClickHouse that is not there would fail
+   * on a dependency the live path never needed. On, a wallet somebody has
+   * backfilled is answered in a query instead of a few thousand RPC calls, and
+   * `coverage.source` says which happened.
+   */
+  API_USE_INDEX: booleanish.default(false),
+  /**
+   * Days of history the API asks for when it queues a wallet for a deep read.
+   *
+   * Larger than `TRACE_LOOKBACK_DAYS` on purpose, and that is the whole point:
+   * the lookback exists because a live crawl has a web request to fit inside,
+   * and a backfill has nothing waiting on it. Asking for the same narrow window
+   * the crawl already failed to answer with would queue work that changes
+   * nothing.
+   */
+  INDEX_REQUEST_DAYS: positiveInt.default(365),
+  /**
+   * How often the ingest worker looks for wallets the API has asked about.
+   *
+   * The queue is a table, not a socket, so this is a poll. Frequent enough that
+   * somebody who was told "come back in a few minutes" is not lied to, rare
+   * enough to be invisible next to the crawl it triggers.
+   */
+  INDEX_REQUEST_POLL_MS: positiveInt.default(30_000),
+  /**
+   * How current an indexed wallet has to be before its request counts as done.
+   *
+   * A backfill from last week knows nothing about this week's trades, so a
+   * covered wallet becomes outstanding again once it is this stale rather than
+   * being finished forever.
+   */
+  INDEX_REQUEST_STALENESS_SEC: positiveInt.default(86_400),
 
   /**
    * How far back a trace reads a wallet's history. Spec §8 assumes 90 days.

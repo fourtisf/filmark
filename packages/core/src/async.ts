@@ -83,17 +83,57 @@ export async function retry<T>(
   throw lastError;
 }
 
+/** How far below the configured rate a limiter will slow itself. */
+const MAX_BACKOFF_FACTOR = 32;
+
+/** Multiplied into the interval on a rejection, and eased out of on success. */
+const BACKOFF_STEP = 2;
+const RECOVERY_STEP = 0.98;
+
 /**
- * A token-bucket limiter. Public RPC keys are the scarcest resource in a
- * backfill, so every outbound call goes through one of these.
+ * A token-bucket limiter that listens when the far end pushes back.
+ *
+ * Public RPC keys are the scarcest resource in a backfill, so every outbound
+ * call goes through one of these. `requestsPerSecond` is what the operator
+ * believes the plan allows, and that belief is routinely wrong — a plan gets
+ * downgraded, a limit is shared with another service, or the figure was a guess
+ * to begin with. A limiter that only obeys the configured number turns every
+ * one of those into a wall of 429s and a request that fails outright, which
+ * reads as a broken key rather than as a number that is too large by two.
+ *
+ * So the configured rate is a ceiling, not a promise: `backOff` halves the rate
+ * when the provider refuses and `recover` eases it back on sustained success.
+ * The client finds the real limit in a few seconds instead of asking an
+ * operator to find it by bisection.
  */
 export class RateLimiter {
   readonly #intervalMs: number;
+  #factor = 1;
   #next = 0;
 
   constructor(requestsPerSecond: number) {
     if (requestsPerSecond <= 0) throw new RangeError('requestsPerSecond must be > 0');
     this.#intervalMs = 1000 / requestsPerSecond;
+  }
+
+  /** Requests per second the limiter is currently pacing to. */
+  get effectiveRate(): number {
+    return 1000 / (this.#intervalMs * this.#factor);
+  }
+
+  /** True while the far end has pushed the rate below what was configured. */
+  get throttled(): boolean {
+    return this.#factor > 1;
+  }
+
+  /**
+   * Epoch milliseconds the next acquisition would be scheduled for.
+   *
+   * Lets a caller holding several limiters send work to whichever is free
+   * soonest, rather than queueing behind one while another idles.
+   */
+  get availableAt(): number {
+    return Math.max(Date.now(), this.#next);
   }
 
   /**
@@ -108,9 +148,45 @@ export class RateLimiter {
     if (cost < 1) throw new RangeError('cost must be >= 1');
     const now = Date.now();
     const scheduled = Math.max(now, this.#next);
-    this.#next = scheduled + this.#intervalMs * cost;
+    this.#next = scheduled + this.#intervalMs * this.#factor * cost;
     const wait = scheduled - now;
     if (wait > 0) await sleep(wait, signal);
+  }
+
+  /**
+   * The far end refused. Halve the rate, and hold the next slot back so the
+   * calls already scheduled do not arrive at the pace that was just rejected.
+   */
+  backOff(): boolean {
+    if (this.#factor >= MAX_BACKOFF_FACTOR) return false;
+    this.#factor = Math.min(MAX_BACKOFF_FACTOR, this.#factor * BACKOFF_STEP);
+    this.#next = Math.max(this.#next, Date.now() + this.#intervalMs * this.#factor);
+    return true;
+  }
+
+  /**
+   * Hold every acquisition back by `ms`, on the far end's own instruction.
+   *
+   * `backOff` changes the *rate*, which is the right answer to a per-second
+   * ceiling and the wrong one to a quota measured over a minute: an endpoint
+   * answering `Retry-After: 58` is not asking to be asked more slowly, it is
+   * asking to be left alone until the window rolls. Halving a rate that is
+   * already under one request a second does nothing it wants. This does.
+   */
+  pause(ms: number): void {
+    if (ms <= 0) return;
+    this.#next = Math.max(this.#next, Date.now() + ms);
+  }
+
+  /**
+   * A call came back clean. Ease towards the configured rate.
+   *
+   * Slowly, and deliberately: recovering as fast as it backed off would put the
+   * client straight back into the limit it just found, which is a client that
+   * spends its life oscillating across a threshold instead of sitting under it.
+   */
+  recover(): void {
+    if (this.#factor > 1) this.#factor = Math.max(1, this.#factor * RECOVERY_STEP);
   }
 }
 

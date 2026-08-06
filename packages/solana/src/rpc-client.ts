@@ -1,17 +1,46 @@
 import {
   RateLimiter,
   chunk,
+  mapWithConcurrency,
+  sleep,
   UpstreamError,
   describeError,
   retry,
   type Logger,
   silentLogger,
 } from '@exitliquidity/core';
+
+/** Host and path only: everything past `?` is a credential. */
+function sanitiseUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    return '<unparseable url>';
+  }
+}
 import type { RpcTransactionResponse } from './adapters/rpc.js';
+
+/**
+ * Transaction batches in flight at once.
+ *
+ * Not a way to exceed the rate limit — the limiter still hands out one slot at
+ * a time — but a way to actually reach it when a round trip is slower than the
+ * gap between slots. Small, because every one of these is a retry surface and a
+ * provider counts them all against the same allowance.
+ */
+const TRANSACTION_BATCH_CONCURRENCY = 3;
 
 export type Commitment = 'processed' | 'confirmed' | 'finalized';
 
 export interface SolanaRpcOptions {
+  /**
+   * One RPC endpoint, or several separated by commas.
+   *
+   * Several is the useful case: a rate limit belongs to a key, so the
+   * allowances add up rather than compete, and a key that runs out of credit
+   * mid-crawl takes its own traffic down and nothing else.
+   */
   readonly url: string;
   readonly maxRequestsPerSecond?: number;
   readonly maxAttempts?: number;
@@ -65,9 +94,38 @@ interface JsonRpcResponse<T> {
  * key in seconds, and retried with backoff on the transport and 429/5xx errors
  * that every provider produces under load.
  */
+/**
+ * One endpoint in the pool, with the state that is genuinely its own.
+ *
+ * A rate limit belongs to a key, not to a client, so two endpoints are two
+ * separate allowances — and a key that has exhausted its credits says nothing
+ * about the one beside it. Keeping the limiter and the cooldown per endpoint is
+ * what lets a dead key stop the traffic to itself and nothing else.
+ */
+interface Endpoint {
+  readonly url: string;
+  readonly limiter: RateLimiter;
+  /** Epoch ms before which this endpoint is not worth asking. */
+  cooldownUntil: number;
+  consecutiveFailures: number;
+}
+
+/**
+ * Longest a refused endpoint is set aside before it is tried again.
+ *
+ * The base is deliberately short. Its job is to make the *next* pick prefer a
+ * different key, and any positive value does that; a long one would mostly add
+ * delay on a single-endpoint deployment, where the retry backoff is already the
+ * thing doing the waiting.
+ */
+const MAX_COOLDOWN_MS = 30_000;
+const COOLDOWN_BASE_MS = 250;
+
+/** A rejected credential is not a busy moment; wait properly before retrying. */
+const REJECTED_COOLDOWN_MS = 300_000;
+
 export class SolanaRpcClient {
-  readonly #url: string;
-  readonly #limiter: RateLimiter;
+  readonly #endpoints: readonly Endpoint[];
   readonly #maxAttempts: number;
   readonly #timeoutMs: number;
   readonly #batchSize: number;
@@ -75,30 +133,55 @@ export class SolanaRpcClient {
   readonly #logger: Logger;
   readonly #fetch: typeof fetch;
   #nextId = 1;
+  #cursor = 0;
 
   constructor(options: SolanaRpcOptions) {
     const rps = options.maxRequestsPerSecond ?? 10;
     const requested = Math.max(1, options.batchSize ?? 20);
 
-    this.#url = options.url;
-    this.#limiter = new RateLimiter(rps);
+    /*
+     * `url` may carry several, comma separated.
+     *
+     * One endpoint is one provider's opinion of how much you may ask, and that
+     * opinion can change without notice — a plan downgrades, a monthly credit
+     * runs out mid-trace, a region has a bad hour. With one URL every one of
+     * those is total. With three it is a third of the throughput and a line in
+     * the log, and the allowances add up rather than compete, because each key
+     * is metered on its own.
+     */
+    const urls = [...new Set(options.url.split(',').map((entry) => entry.trim()))].filter(
+      (entry) => entry !== '',
+    );
+    if (urls.length === 0) throw new RangeError('at least one RPC url is required');
+    this.#endpoints = urls.map((url) => ({
+      url,
+      limiter: new RateLimiter(rps),
+      cooldownUntil: 0,
+      consecutiveFailures: 0,
+    }));
+
     this.#maxAttempts = options.maxAttempts ?? 5;
     this.#timeoutMs = options.timeoutMs ?? 20_000;
     this.#commitment = options.commitment ?? 'confirmed';
     this.#logger = options.logger ?? silentLogger;
     this.#fetch = options.fetchImpl ?? globalThis.fetch;
 
-    // A batch larger than the per-second allowance is a burst the limiter
-    // cannot smooth. It charges the batch its full cost, so the *average* rate
-    // is right — but all twenty calls still land in the same millisecond, and a
-    // provider metering a one-second window rejects them on arrival however
-    // long the client then waits. The result is a 429 on every attempt, which
-    // reads as a broken key rather than as a batch that was too wide.
-    this.#batchSize = Math.min(requested, Math.max(1, Math.floor(rps)));
+    /*
+     * A batch is a burst the limiter cannot smooth: it charges the full cost so
+     * the *average* rate is right, but every call in it still lands in the same
+     * millisecond. Clamping to the whole per-second allowance was not enough —
+     * it puts an entire second's budget on the wire at one instant, and a
+     * provider measuring a sliding window is still counting those when the next
+     * batch arrives. A live endpoint refused every attempt at exactly that
+     * setting, which reads as a dead key rather than as a batch too wide by
+     * half. Half the allowance costs one extra round trip and leaves the meter
+     * somewhere to breathe.
+     */
+    this.#batchSize = Math.min(requested, Math.max(1, Math.floor(rps / 2)));
     if (this.#batchSize < requested) {
       this.#logger.warn(
         { requested, applied: this.#batchSize, maxRequestsPerSecond: rps },
-        'batch size reduced to the per-second limit; a wider batch would burst past it',
+        'batch size reduced to half the per-second limit; a wider batch puts the whole allowance on the wire at once',
       );
     }
   }
@@ -159,9 +242,43 @@ export class SolanaRpcClient {
     );
   }
 
-  /** How many transactions one `getTransactions` request carries. */
+  /** How many transactions one JSON-RPC batch carries. */
   get transactionBatchSize(): number {
     return this.#batchSize;
+  }
+
+  /**
+   * How many signatures to hand `getTransactions` at once to keep it busy.
+   *
+   * A caller that pre-chunks to `transactionBatchSize` and calls once per
+   * chunk gets no overlap at all — every call contains exactly one batch, so
+   * the concurrency inside has nothing to run alongside and the crawl waits out
+   * every round trip. That is precisely what happened: the overlap was added,
+   * the throughput did not move, and the reason was one caller chunking to the
+   * wrong width. Chunk to this instead, and check whatever budget you keep
+   * between windows rather than between batches.
+   */
+  get transactionWindowSize(): number {
+    return this.#batchSize * this.#concurrency();
+  }
+
+  /**
+   * Batches to keep in flight, which is not always the same question as rate.
+   *
+   * Providers meter more than one thing. Some cap requests per second, some cap
+   * how many may be open at once, and a plan that refuses a fourth connection
+   * refuses it however patiently the client spaced the first three. Backing the
+   * *rate* off does nothing there: a live endpoint was slowed from ten calls a
+   * second to under one and refused every step of the way, which no per-second
+   * limit does. Serial is the shape that was working before the overlap was
+   * added, so a throttled client returns to it rather than continuing to insist
+   * on the concurrency that may be what is being refused.
+   */
+  #concurrency(): number {
+    // One healthy endpoint is enough to keep overlapping; the pool only goes
+    // serial when every key in it is pushing back.
+    const anyHealthy = this.#endpoints.some((entry) => !entry.limiter.throttled);
+    return anyHealthy ? TRANSACTION_BATCH_CONCURRENCY : 1;
   }
 
   /**
@@ -171,12 +288,54 @@ export class SolanaRpcClient {
    * anything past `?` is a credential and never belongs in a log line.
    */
   get endpoint(): string {
-    try {
-      const url = new URL(this.#url);
-      return `${url.protocol}//${url.host}${url.pathname}`;
-    } catch {
-      return '<unparseable url>';
+    return this.#endpoints.map((entry) => sanitiseUrl(entry.url)).join(', ');
+  }
+
+  /** How many endpoints are in the pool. */
+  get endpointCount(): number {
+    return this.#endpoints.length;
+  }
+
+  /**
+   * The endpoint that can take work soonest.
+   *
+   * Both halves matter: an endpoint in cooldown has told us it will refuse, and
+   * an endpoint whose limiter is booked out for the next second is idle time we
+   * do not have to spend. Picking the earliest of the two spreads a crawl over
+   * every key that is willing, without a scheduler.
+   */
+  #pick(): Endpoint {
+    const count = this.#endpoints.length;
+    // Scanning from a rotating start makes ties alternate. Without it every
+    // equal choice goes to the first endpoint, so a pool of healthy keys all
+    // queue behind one and the rest are decoration — and a key just out of
+    // cooldown is picked again the instant it ties, before it has proved
+    // anything.
+    const start = this.#cursor % count;
+    let best = this.#endpoints[start] as Endpoint;
+    let bestIndex = start;
+    let bestAt = Math.max(best.cooldownUntil, best.limiter.availableAt);
+
+    for (let step = 1; step < count; step += 1) {
+      const index = (start + step) % count;
+      const entry = this.#endpoints[index] as Endpoint;
+      const at = Math.max(entry.cooldownUntil, entry.limiter.availableAt);
+      if (at < bestAt) {
+        best = entry;
+        bestIndex = index;
+        bestAt = at;
+      }
     }
+
+    this.#cursor = (bestIndex + 1) % count;
+    return best;
+  }
+
+  /** Sets an endpoint aside, for longer each time it refuses in a row. */
+  #cool(endpoint: Endpoint, baseMs: number): void {
+    endpoint.consecutiveFailures += 1;
+    const wait = Math.min(MAX_COOLDOWN_MS, baseMs * 2 ** (endpoint.consecutiveFailures - 1));
+    endpoint.cooldownUntil = Date.now() + wait;
   }
 
   /**
@@ -200,11 +359,30 @@ export class SolanaRpcClient {
       return out;
     }
 
-    const out: (RpcTransactionResponse | null)[] = [];
-    for (const group of chunk([...signatures], this.#batchSize)) {
-      out.push(...(await this.#transactionBatch(group, signal)));
-    }
-    return out;
+    /*
+     * Batches overlap; the limiter still decides the rate.
+     *
+     * Run end to end, batch N+1 does not leave until batch N has come back, so
+     * the achieved rate is whichever is *slower*: the configured allowance, or
+     * one batch per round trip. A ten-wide batch on a ten-per-second budget has
+     * a second to play with, and a `getTransaction` batch that takes longer than
+     * that spends the difference idle — a wallet crawl then runs at well under
+     * the rate it was configured for and the config looks like a lie.
+     *
+     * This does not raise the rate. `acquire` hands out successive slots from
+     * one schedule, so three callers get three consecutive slots rather than
+     * three at once; overlapping them only fills the gap between a slot opening
+     * and the previous response arriving. Order is preserved by the mapper, and
+     * callers index into the result by position.
+     */
+    const groups = chunk([...signatures], this.#batchSize);
+    const pages = await mapWithConcurrency(
+      groups,
+      Math.max(1, Math.min(this.#concurrency(), groups.length)),
+      (group) => this.#transactionBatch(group, signal),
+      signal,
+    );
+    return pages.flat();
   }
 
   async #transactionBatch(
@@ -336,9 +514,15 @@ export class SolanaRpcClient {
     const method = label;
     return retry(
       async (attempt) => {
+        // Picked per attempt, not per call: a retry that lands on a different
+        // key is the whole point of having more than one.
+        const endpoint = this.#pick();
+        const wait = endpoint.cooldownUntil - Date.now();
+        if (wait > 0) await sleep(wait, signal);
+
         // Charged per RPC call, not per request: a batch of twenty spends
         // twenty units, because that is what the provider counts.
-        await this.#limiter.acquire(signal, cost);
+        await endpoint.limiter.acquire(signal, cost);
         const controller = new AbortController();
         const timer = setTimeout(() => {
           controller.abort();
@@ -349,7 +533,7 @@ export class SolanaRpcClient {
         signal?.addEventListener('abort', onAbort, { once: true });
 
         try {
-          const response = await this.#fetch(this.#url, {
+          const response = await this.#fetch(endpoint.url, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
@@ -357,9 +541,43 @@ export class SolanaRpcClient {
           });
 
           if (!response.ok) {
-            // 429 and 5xx are the shapes rate limits and provider hiccups take.
-            // The body is where the provider says which limit was hit and for
-            // how long; a bare status number sends the operator guessing.
+            /*
+             * A 429 is the endpoint stating its real limit, which is worth more
+             * than the one in the config. Retrying at the pace that was just
+             * refused earns the same answer five times and then gives up, so
+             * the limiter is slowed before the next attempt is scheduled — and
+             * stays slowed for the calls behind this one, which are the ones
+             * that would otherwise arrive at exactly the rejected rate. The
+             * cooldown is what moves the next attempt to a different key.
+             */
+            if (response.status === 429) {
+              endpoint.limiter.backOff();
+              this.#cool(endpoint, COOLDOWN_BASE_MS);
+              this.#logger.warn(
+                {
+                  method,
+                  attempt,
+                  endpoint: sanitiseUrl(endpoint.url),
+                  rate: Number(endpoint.limiter.effectiveRate.toFixed(2)),
+                  batchesInFlight: this.#concurrency(),
+                  endpoints: this.#endpoints.length,
+                },
+                'rate limited; slowing this endpoint down, going serial, and preferring the others. If it keeps happening all the way down, it is not a per-second limit — check the plan for a credit or connection quota',
+              );
+            }
+            // A refused credential is not a busy moment. Set the endpoint aside
+            // properly rather than spending every retry rediscovering it.
+            if (response.status === 401 || response.status === 403) {
+              endpoint.consecutiveFailures += 1;
+              endpoint.cooldownUntil = Date.now() + REJECTED_COOLDOWN_MS;
+              this.#logger.error(
+                { method, endpoint: sanitiseUrl(endpoint.url), status: response.status },
+                'the endpoint refused this service’s credentials; setting it aside. Check the key and its quota',
+              );
+            }
+            // 5xx is the other shape a provider hiccup takes. The body is where
+            // it says which limit was hit and for how long; a bare status
+            // number sends the operator guessing.
             const text = await response.text().catch(() => '<unreadable>');
             throw new UpstreamError(`RPC ${method} returned HTTP ${response.status}`, {
               context: {
@@ -373,7 +591,14 @@ export class SolanaRpcClient {
           }
 
           const body: unknown = await response.json();
-          return parse(body, attempt);
+          const parsed = parse(body, attempt);
+          // Clean call. Ease back towards the configured rate, slowly enough
+          // that the client settles under the real limit instead of
+          // oscillating across it, and let the endpoint out of any cooldown.
+          endpoint.limiter.recover();
+          endpoint.consecutiveFailures = 0;
+          endpoint.cooldownUntil = 0;
+          return parsed;
         } catch (error) {
           if (error instanceof UpstreamError) throw error;
           // The identity of the underlying failure goes into context as well as

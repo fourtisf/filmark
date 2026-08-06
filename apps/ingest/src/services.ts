@@ -13,6 +13,8 @@ import {
   MintRepository,
   SolUsdRepository,
   SwapRepository,
+  WalletCoverageRepository,
+  WalletIndexRequestRepository,
   clickHouseOptionsFromConfig,
   createClickHouseClient,
   type ClickHouseClient,
@@ -40,6 +42,9 @@ export interface Services {
   readonly checkpoints: CheckpointRepository;
   readonly mints: MintRepository;
   readonly solUsd: SolUsdRepository;
+  readonly walletCoverage: WalletCoverageRepository;
+  /** Wallets the trace API could not answer inside a request. */
+  readonly indexRequests: WalletIndexRequestRepository;
   readonly series: SolUsdSeries;
   readonly pyth: PythClient;
   readonly prices: PriceService;
@@ -67,6 +72,8 @@ export function createServices(options: CreateServicesOptions = {}): Services {
   const clickhouse = createClickHouseClient(clickHouseOptionsFromConfig(config));
   const swaps = new SwapRepository(clickhouse);
   const checkpoints = new CheckpointRepository(clickhouse);
+  const walletCoverage = new WalletCoverageRepository(clickhouse);
+  const indexRequests = new WalletIndexRequestRepository(clickhouse);
   const mints = new MintRepository(clickhouse);
   const solUsd = new SolUsdRepository(clickhouse);
 
@@ -87,6 +94,7 @@ export function createServices(options: CreateServicesOptions = {}): Services {
     benchmarksUrl: config.PYTH_BENCHMARKS_URL,
     hermesUrl: config.PYTH_HERMES_URL,
     feedId: config.PYTH_SOL_USD_FEED_ID,
+    maxRequestsPerSecond: config.PYTH_MAX_RPS,
     logger,
   });
   const prices = new PriceService({ repository: solUsd, pyth, series, logger });
@@ -123,6 +131,8 @@ export function createServices(options: CreateServicesOptions = {}): Services {
     checkpoints,
     mints,
     solUsd,
+    walletCoverage,
+    indexRequests,
     series,
     pyth,
     prices,

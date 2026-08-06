@@ -12,8 +12,41 @@
  * it was and what to do about it.
  */
 import { argv, exit, stderr, stdout } from 'node:process';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/**
+ * A GET that will wait as long as the trace takes.
+ *
+ * Not `fetch`: Node's gives up if response headers have not arrived within five
+ * minutes, and a trace is allowed to run for as long as `API_TRACE_TIMEOUT_MS`
+ * says — which an operator widens precisely when a wallet is deep enough to
+ * need it. The client would then abort a request the server was still working
+ * on and report it as "could not reach the API", which is the one thing this
+ * script exists not to do: invent a fault in the half of the system that was
+ * fine. The server's own timeout is the bound here, deliberately.
+ */
+function get(target) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(target);
+    const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const req = send(url, { headers: { accept: 'application/json' } }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        body += String(chunk);
+      });
+      res.on('end', () => {
+        resolve({ status: res.statusCode ?? 0, ok: (res.statusCode ?? 0) < 400, body });
+      });
+    });
+    req.setTimeout(0);
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 const args = argv.slice(2);
 const urlFlag = args.indexOf('--url');
@@ -41,24 +74,91 @@ if (!BASE58.test(wallet)) {
 const started = Date.now();
 let response;
 try {
-  response = await fetch(`${base}/v1/trace/${wallet}`, { headers: { accept: 'application/json' } });
+  response = await get(`${base}/v1/trace/${wallet}`);
 } catch (error) {
   stderr.write(`could not reach ${base} — is the API running? (${String(error)})\n`);
   exit(1);
 }
 
-const body = await response.json().catch(() => null);
+let body = null;
+try {
+  body = JSON.parse(response.body);
+} catch {
+  body = null;
+}
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
+
+// A reply that is not JSON did not come from the trace API. Something in front
+// of it answered instead, and saying "the trace failed" would send the reader
+// looking in the wrong place entirely.
+if (body === null && response.body !== '') {
+  stderr.write(
+    `HTTP ${response.status} after ${seconds}s, and the reply was not JSON — so it did not\n` +
+      `come from the trace API. A proxy, CDN or host error page answered in its place:\n\n` +
+      `${response.body.slice(0, 300)}\n`,
+  );
+  exit(1);
+}
 
 if (!response.ok || body === null) {
   stderr.write(`HTTP ${response.status} after ${seconds}s\n`);
   stderr.write(`${JSON.stringify(body, null, 2)}\n`);
+  /*
+   * The body is deliberately vague about upstream failures: an RPC URL carries
+   * its API key in the query string, and an error body is the classic place for
+   * one to escape. The detail is in the service's own log instead, with the
+   * provider's own words in it — so point at that rather than leaving the
+   * reader with a sentence they cannot act on.
+   */
+  if (
+    body?.error === 'upstream' ||
+    body?.error === 'rpc_rate_limited' ||
+    body?.error === 'rpc_rejected'
+  ) {
+    stderr.write(
+      `\nThe status and the endpoint's own words are in the service log, not here:\n` +
+        `  pm2 logs fillmark-api --lines 200 --nostream | grep -E "retrying RPC|trace failed"\n` +
+        (body.error === 'rpc_rate_limited'
+          ? `\nA 429 usually means SOLANA_RPC_MAX_RPS is above what the plan allows. A batch is\n` +
+            `one HTTP request but N metered calls landing together, so a batch wider than the\n` +
+            `per-second allowance is rejected however patiently the client spaced it.\n`
+          : ''),
+    );
+  }
   exit(1);
 }
 
 const { coverage: c, totals: t } = body;
-const usd = (n) => (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
+/* Null is not zero. A trace that stopped before attribution reports null for
+   every figure attribution would have produced, and printing "$0" there is the
+   constant-as-measurement fault this script exists to catch elsewhere. */
+const usd = (n) =>
+  n === null || n === undefined
+    ? '— (attribution never ran)'
+    : (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
 const row = (label, value) => stdout.write(`  ${label.padEnd(22)}${value}\n`);
+
+/*
+ * Whether the API answering is the build this script came from.
+ *
+ * A checkout and the process serving it are two different things, and `git
+ * pull` moving one of them is not the same as a restart moving the other. A
+ * stale service answers every question below with figures that predate the
+ * fields being asked about, and the reading looks like a finding rather than
+ * like an old binary. `coverage` is the contract, so its own shape is the
+ * cheapest honest version marker there is.
+ */
+const EXPECTED_COVERAGE_FIELDS = ['swapsUnpriced', 'priceSeries', 'stoppedOnTimeBudget'];
+const missingFields = EXPECTED_COVERAGE_FIELDS.filter((field) => !(field in (c ?? {})));
+if (missingFields.length > 0) {
+  stdout.write(
+    `\n  ! The API answering ${base} predates this script.\n` +
+      `    Its coverage block has no ${missingFields.join(', ')}, so it is running a build\n` +
+      `    from before those were added. Everything below is that older build's reading.\n` +
+      `    Rebuild and restart the service before trusting it:\n` +
+      `      pnpm install && pnpm run build && pm2 restart fillmark-api --update-env\n`,
+  );
+}
 // The response is unvalidated JSON, so every count is coerced rather than trusted.
 const census = Object.entries(c.swapCensus ?? {});
 const sideTotal = (suffix) => {
@@ -69,16 +169,71 @@ const sideTotal = (suffix) => {
 const buys = sideTotal(':buy');
 const sells = sideTotal(':sell');
 
+// The window read, which is not the window asked for once a budget cuts the
+// crawl short. Printing the configured number there is a setting dressed as a
+// measurement, and it is the first thing to mislead a reader looking for depth.
+const daysRead = c.fromTs && c.toTs ? Math.max(1, Math.round((c.toTs - c.fromTs) / 86400)) : null;
+
 stdout.write(`\n${wallet}\n  ${response.status} in ${seconds}s\n\n`);
 row('status', body.status);
+row(
+  'source',
+  c.source === 'index' ? 'swap index — no RPC spent, whole window covered' : 'live chain crawl',
+);
+row(
+  'window read',
+  daysRead === null
+    ? `— of ${c.lookbackDays} days asked for`
+    : `${daysRead} days of ${c.lookbackDays} asked for` +
+        (daysRead < c.lookbackDays * 0.9 ? '  ← the budget, not the wallet' : ''),
+);
 row('swaps read', census.length === 0 ? 'none' : census.map(([k, v]) => `${k} ${v}`).join('  '));
 row("others' swaps", c.foreignSwaps);
+row(
+  'swaps unpriced',
+  `${c.swapsUnpriced ?? '—'}${c.poolSwapsUnpriced ? ` (${c.poolSwapsUnpriced} in pools)` : ''}`,
+);
+row(
+  'price series',
+  c.priceSeries
+    ? `${c.priceSeries.minutes.toLocaleString('en-US')} minutes, ` +
+        `${new Date(c.priceSeries.fromTs * 1000).toISOString().slice(0, 16)} → ` +
+        new Date(c.priceSeries.toTs * 1000).toISOString().slice(0, 16)
+    : 'none held',
+);
 row(
   'parse skips',
   Object.keys(c.parseSkips ?? {}).length === 0 ? 'none' : JSON.stringify(c.parseSkips),
 );
 row('transactions read', c.transactionsFetched.toLocaleString('en-US'));
-row('history truncated', c.historyTruncated);
+row(
+  'crawl stopped at',
+  {
+    end_of_history: 'end of history — nothing left unread',
+    lookback_cutoff: `the ${c.lookbackDays}-day lookback — older history exists and was not read`,
+    signature_budget: 'the signature budget — older history exists and was not read',
+    time_budget: 'the clock — older history exists and was not read',
+  }[c.crawlStoppedAt] ?? (c.historyTruncated ? 'a budget' : 'unknown (older API)'),
+);
+row(
+  'stopped on clock',
+  c.stoppedOnTimeBudget === true
+    ? `yes — ${(c.transactionsUnread ?? 0).toLocaleString('en-US')} transactions unread`
+    : 'no',
+);
+/* Whether anything is being done about a read that fell short.
+   Its absence is what made a deploy ambiguous: the engine had queued the wallet
+   and this script had no way to say so, which reads exactly like it had not. */
+row(
+  'deep read',
+  c.deepReadRequested === true
+    ? 'queued — the worker is reading this wallet in full; trace again in a few minutes'
+    : c.source === 'index'
+      ? 'not needed — answered from the index'
+      : c.deepReadRequested === undefined
+        ? 'unknown (older API — redeploy)'
+        : 'not queued',
+);
 row('positions closed', t.positionsClosed);
 row('excluded', Object.keys(c.excluded ?? {}).length === 0 ? 'none' : JSON.stringify(c.excluded));
 row('realised PnL', usd(t.realisedPnlUsd));
@@ -94,12 +249,84 @@ const VERDICTS = {
         `That is the signature of a bot: the venue names the bot's account as the trader, not the signer.`
       : `Nothing on ${c.venues.join(' or ')} in ${c.lookbackDays} days. Trades on any other venue are\n` +
         `invisible to this build — a gap in coverage, not a finding about the wallet.`,
-  no_losses: () =>
-    `${t.positionsClosed} closed positions, none realising a loss we can stand behind.`,
-  unreadable_history: () =>
-    `${sells} sells and ${buys} buys. A wallet cannot sell what it never bought, so the read lost\n` +
-    `the entry legs. ${c.foreignSwaps} swaps here were executed by another wallet — if that is large,\n` +
-    `trace that address instead. Otherwise the buys happened on a venue with no parser.`,
+  /*
+   * `no_losses` is the one verdict that can be arrived at rather than measured.
+   * A position is only attributable with a complete basis, so anything excluded
+   * as `unpriced` or `unknown_basis` was dropped before the loss test ran — and
+   * when that is most of them, "none realising a loss" describes the exclusions,
+   * not the wallet. A newer API returns `unpriced_history` for the extreme case;
+   * this covers the partial one, and an older API that has no such status.
+   */
+  no_losses: () => {
+    const dropped = Object.entries(c.excluded ?? {}).filter(([reason]) => reason !== 'not_a_loss');
+    const lost = dropped.reduce((total, [, count]) => total + Number(count), 0);
+    if (lost === 0 || t.positionsClosed === 0) {
+      return `${t.positionsClosed} closed positions, none realising a loss we can stand behind.`;
+    }
+    return (
+      `${t.positionsClosed} closed positions, but ${lost} were dropped before the loss test ran\n` +
+      `(${dropped.map(([reason, count]) => `${reason} ${count}`).join(', ')}). "No losses" here\n` +
+      `describes what was excluded, not what the wallet did.\n` +
+      (Number(c.excluded?.unpriced ?? 0) > 0
+        ? `  unpriced means the SOL/USD feed, not the wallet — check the API host can reach\n` +
+          `  PYTH_BENCHMARKS_URL, then retry.`
+        : `  unknown_basis means more was sold than was read as bought — see the census above.`)
+    );
+  },
+  unreadable_history: () => {
+    /*
+     * When the engine has already queued the wallet, that is the answer.
+     *
+     * The advice below is real but it is operator advice — raise a setting,
+     * restart, try again. A queued deep read needs none of it and supersedes
+     * all of it, so leading with a config change there sends somebody to edit
+     * .env for a problem that is already being solved.
+     */
+    const queued =
+      c.deepReadRequested === true
+        ? `This wallet is already queued for a full read, which is not bound by the settings\n` +
+          `below. Wait for the worker (pm2 logs fillmark-worker) and run this again — the\n` +
+          `source should then read "swap index". Everything below is why the live path could\n` +
+          `not answer, for reference rather than for action.\n\n`
+        : '';
+    const head =
+      queued +
+      `${sells} sells and ${buys} buys. A wallet cannot sell what it never bought, so the read\n` +
+      `lost the entry legs. In order of likelihood, given what this trace measured:\n`;
+    const causes = [];
+    if (c.crawlStoppedAt === 'lookback_cutoff') {
+      causes.push(
+        `  1. The buys are older than the ${c.lookbackDays}-day window. The crawl stopped at the\n` +
+          `     cutoff with history still behind it, and only ${c.transactionsFetched} transactions were\n` +
+          `     read — raise TRACE_LOOKBACK_DAYS and try again before looking anywhere else.`,
+      );
+    } else if (c.crawlStoppedAt === 'signature_budget' || c.crawlStoppedAt === 'time_budget') {
+      causes.push(
+        `  1. The crawl ran out of ${c.crawlStoppedAt === 'time_budget' ? 'time' : 'budget'} before the ${c.lookbackDays}-day cutoff, so the\n` +
+          `     older half of this wallet — most likely including the buys — was never read.`,
+      );
+    }
+    if (c.foreignSwaps > 0) {
+      causes.push(
+        `  ${causes.length + 1}. ${c.foreignSwaps} swaps here were executed by another wallet. That is the bot\n` +
+          `     signature — trace that address instead.`,
+      );
+    }
+    causes.push(
+      `  ${causes.length + 1}. The buys happened on a venue with no parser (${c.venues.join(', ')} only),\n` +
+        `     or the tokens arrived by transfer rather than by purchase.`,
+    );
+    return head + causes.join('\n');
+  },
+  unpriced_history: () =>
+    `${c.swapsUnpriced} swaps read, none of them priceable. Cost basis is a dollar figure, so\n` +
+    `there is nothing to compute a loss from. This is the SOL/USD feed, not the wallet:\n` +
+    `${
+      c.priceSeries
+        ? `the engine holds ${c.priceSeries.minutes.toLocaleString('en-US')} minutes and this ` +
+          `wallet's trades fall outside them`
+        : 'the engine holds no price history at all'
+    }. Check PYTH_BENCHMARKS_URL is reachable from the API host and retry.`,
   no_attribution: () =>
     `Losses found, but every wallet selling into their windows was filtered out.`,
 };

@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+#
+# Answers "is this deployment actually wired up?" in one command.
+#
+#   scripts/doctor.sh
+#
+# It exists because the alternative is six ad-hoc greps across pm2, nginx and
+# ClickHouse, each of which can look fine while the thing they add up to does
+# not work — a stale API serving a current console, an index switched off, a
+# queue nobody drains. Every check below reads state rather than logs, prints
+# what it found, and says plainly whether it is right.
+#
+# Nothing here changes anything. Read-only, safe to run any time.
+set -uo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VHOST="${FILLMARK_VHOST:-/etc/nginx/sites-available/fillmark}"
+APP="${FILLMARK_PM2_APP:-fillmark-api}"
+WORKER="${FILLMARK_PM2_WORKER:-fillmark-worker}"
+WALLET="${1:-}"
+
+FAILED=0
+PROBLEMS=()
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+# Recorded as well as printed. A long report scrolls, and the one line that
+# mattered ends up above the window while the verdict at the bottom says only
+# that something was wrong — which is how the most important fact in this
+# script came to be the least visible one.
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; PROBLEMS+=("$1"); FAILED=1; }
+note() { printf '    %s\n' "$1"; }
+head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+
+cd "$REPO" || exit 1
+
+# ── the repo itself ───────────────────────────────────────────────────────
+head_ "Checkout"
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+HEAD_SHA="$(git rev-parse --short HEAD 2>/dev/null)"
+note "$REPO on $BRANCH at $HEAD_SHA"
+git diff --quiet 2>/dev/null && ok "no uncommitted changes" ||
+  bad "uncommitted changes — the build may not match the branch"
+
+# ── env ───────────────────────────────────────────────────────────────────
+head_ "Configuration (.env)"
+if [ -r .env ]; then
+  for key in API_USE_INDEX TRACE_LOOKBACK_DAYS INDEX_REQUEST_DAYS API_TRACE_TIMEOUT_MS; do
+    VAL="$(grep -E "^${key}=" .env | tail -1 | cut -d= -f2-)"
+    note "$(printf '%-24s%s' "$key" "${VAL:-(unset — default)}")"
+  done
+  grep -qE '^API_USE_INDEX=(true|1|yes)$' .env &&
+    ok "the index is switched on" ||
+    bad "API_USE_INDEX is not true — nothing is queued and nothing is served from the index"
+else
+  bad "no .env in $REPO"
+fi
+
+# ── processes ─────────────────────────────────────────────────────────────
+head_ "Processes"
+for proc in "$APP" "$WORKER"; do
+  if pm2 describe "$proc" 2>/dev/null | grep -q 'status.*online'; then
+    ok "$proc online"
+  else
+    bad "$proc is not online — pm2 logs $proc --lines 50"
+  fi
+done
+
+# ── is the running API the build in this checkout? ────────────────────────
+head_ "Is the API running this build?"
+# Ask the API, do not infer.
+#
+# The previous version of this check compared pm2's uptime against the mtime of
+# apps/api/dist/main.js, and passed while the API served code months older —
+# because it assumed the process was running that file. It is the assumption
+# that was wrong, not the arithmetic. /healthz now reports which module was
+# actually loaded and when it was written, so this reads a fact.
+HEALTH="$(curl -fsS --max-time 5 http://127.0.0.1:8080/healthz 2>/dev/null)"
+if [ -z "$HEALTH" ]; then
+  bad "the API is not answering on 127.0.0.1:8080"
+elif ! grep -q '"module"' <<<"$HEALTH"; then
+  bad "the API predates this build — /healthz does not report which module it runs"
+  note "It cannot have the deep-read queue either. Rebuild and restart:"
+  note "  cd $REPO && pnpm install --frozen-lockfile && pnpm run build && pm2 restart $APP --update-env"
+else
+  RUNNING_MODULE="$(sed -n 's/.*"module":"\([^"]*\)".*/\1/p' <<<"$HEALTH")"
+  RUNNING_BUILT="$(sed -n 's/.*"builtAt":"\([^"]*\)".*/\1/p' <<<"$HEALTH")"
+  note "module   ${RUNNING_MODULE:-unknown}"
+  note "built    ${RUNNING_BUILT:-unknown}"
+
+  NEWEST="$(find "$REPO/apps" "$REPO/packages" -name '*.ts' -newermt "${RUNNING_BUILT:-@0}" \
+    -not -path '*/node_modules/*' -not -path '*/dist/*' -not -name '*.test.ts' 2>/dev/null | head -3)"
+  if [ -n "$RUNNING_BUILT" ] && [ -n "$NEWEST" ]; then
+    bad "source files are newer than the running build — it is serving older code"
+    sed "s|$REPO/|  |" <<<"$NEWEST" | sed 's/^/    /'
+    note "cd $REPO && pnpm run build && pm2 restart $APP --update-env"
+  else
+    ok "the running module is at least as new as the sources"
+  fi
+fi
+
+# ── the console the browser gets ──────────────────────────────────────────
+head_ "Console"
+WANT="$(grep -o 'fillmark:build" content="[a-f0-9]*"' "$REPO/dist/app/index.html" 2>/dev/null |
+  head -1 | grep -o '[a-f0-9]\{6,\}')"
+SERVER="$(grep -hoE '^[[:space:]]*server_name[[:space:]]+[^;]+' "$VHOST" 2>/dev/null |
+  head -1 | awk '{print $2}')"
+if [ -z "$WANT" ]; then
+  bad "no local build to compare against — run node scripts/build-site.mjs"
+elif [ -z "$SERVER" ]; then
+  bad "cannot read server_name from $VHOST"
+else
+  GOT="$(curl -fsS "https://$SERVER/app/" 2>/dev/null |
+    grep -o 'fillmark:build" content="[a-f0-9]*"' | head -1 | grep -o '[a-f0-9]\{6,\}')"
+  [ "$GOT" = "$WANT" ] && ok "serving build $GOT" ||
+    bad "serving build ${GOT:-<none>}, this checkout builds $WANT"
+fi
+
+# ── the store ─────────────────────────────────────────────────────────────
+head_ "Index"
+CH_URL="$(grep -E '^CLICKHOUSE_URL=' .env 2>/dev/null | tail -1 | cut -d= -f2-)"
+CH_DB="$(grep -E '^CLICKHOUSE_DATABASE=' .env 2>/dev/null | tail -1 | cut -d= -f2-)"
+CH_USER="$(grep -E '^CLICKHOUSE_USER=' .env 2>/dev/null | tail -1 | cut -d= -f2-)"
+CH_PASS="$(grep -E '^CLICKHOUSE_PASSWORD=' .env 2>/dev/null | tail -1 | cut -d= -f2-)"
+CH_URL="${CH_URL:-http://localhost:8123}"
+CH_DB="${CH_DB:-exitliquidity}"
+
+ch() {
+  curl -fsS "${CH_URL}/?database=${CH_DB}" \
+    ${CH_USER:+-u "${CH_USER}:${CH_PASS}"} --data-binary "$1" 2>/dev/null
+}
+
+if ! ch 'SELECT 1' >/dev/null; then
+  bad "ClickHouse at $CH_URL is not answering — docker ps"
+else
+  ok "ClickHouse answering at $CH_URL/$CH_DB"
+
+  TABLES="$(ch "SELECT name FROM system.tables WHERE database='${CH_DB}'")"
+  for table in swaps wallet_coverage wallet_index_requests; do
+    grep -qx "$table" <<<"$TABLES" && ok "$table exists" ||
+      bad "$table is missing — pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts migrate"
+  done
+
+  if grep -qx wallet_index_requests <<<"$TABLES"; then
+    QUEUED="$(ch 'SELECT count() FROM wallet_index_requests FINAL')"
+    note "wallets requested: ${QUEUED:-?}"
+    [ "${QUEUED:-0}" != "0" ] &&
+      ch 'SELECT wallet, days, reason, requested_at FROM wallet_index_requests FINAL
+          ORDER BY requested_at DESC LIMIT 5 FORMAT PrettyCompactMonoBlock' |
+        sed 's/^/    /'
+  fi
+
+  if grep -qx wallet_coverage <<<"$TABLES"; then
+    COVERED="$(ch 'SELECT count() FROM wallet_coverage FINAL')"
+    note "wallets indexed:   ${COVERED:-?}"
+    [ "${COVERED:-0}" != "0" ] &&
+      ch 'SELECT wallet, from_ts, to_ts, swaps, prices_ready FROM wallet_coverage FINAL
+          ORDER BY updated_at DESC LIMIT 5 FORMAT PrettyCompactMonoBlock' |
+        sed 's/^/    /'
+  fi
+
+  if [ -n "$WALLET" ] && grep -qx wallet_coverage <<<"$TABLES"; then
+    head_ "This wallet: $WALLET"
+    ROW="$(ch "SELECT toUnixTimestamp(from_ts), toUnixTimestamp(to_ts), swaps
+               FROM wallet_coverage FINAL WHERE wallet='${WALLET}'")"
+    if [ -z "$ROW" ]; then
+      REQ="$(ch "SELECT count() FROM wallet_index_requests FINAL WHERE wallet='${WALLET}'")"
+      if [ "${REQ:-0}" != "0" ]; then
+        ok "queued, not yet indexed — the worker will pick it up within a poll interval"
+      else
+        bad "neither indexed nor queued"
+        note "Trace it once at https://${SERVER}/app/?wallet=${WALLET} — that is what queues it."
+        note "If it stays unqueued after a trace, API_USE_INDEX is off or the API is stale."
+      fi
+    else
+      ok "indexed"
+      note "$ROW"
+      SWAPS="$(ch "SELECT count() FROM swaps WHERE wallet='${WALLET}'")"
+      note "swap rows stored: ${SWAPS:-0}"
+    fi
+  fi
+fi
+
+# ── what the API itself said ──────────────────────────────────────────────
+head_ "What the API reported"
+# The startup line and the queue attempt. Between them they separate "the index
+# is switched off" from "the API tried to queue and was refused", which look
+# identical from every other angle: an empty queue.
+LOG="$(pm2 logs "$APP" --lines 400 --nostream 2>/dev/null)"
+if [ -z "$LOG" ]; then
+  note "no log available — pm2 logs $APP --lines 200 --nostream"
+else
+  if grep -q '"index":"on"' <<<"$LOG"; then
+    ok 'the API booted with the index ON'
+  elif grep -q '"index":"off"' <<<"$LOG"; then
+    bad 'the API booted with the index OFF — it will never queue anything'
+    note "set API_USE_INDEX=true in $REPO/.env, then: pm2 restart $APP --update-env"
+  else
+    note 'no startup line in the last 400 lines — restart the API to see it'
+  fi
+
+  if grep -q 'could not queue a deep read' <<<"$LOG"; then
+    bad 'the API tried to queue a wallet and the store refused it'
+    grep 'could not queue a deep read' <<<"$LOG" | tail -2 | sed 's/^/    /'
+  elif grep -q 'queued a deep read' <<<"$LOG"; then
+    ok 'the API has queued at least one wallet'
+  else
+    note 'the API has not tried to queue anything in the last 400 lines'
+  fi
+fi
+
+head_ "Verdict"
+if [ "$FAILED" -eq 0 ]; then
+  printf '  \033[32mEverything above is wired up.\033[0m\n'
+else
+  printf '  \033[31m%d thing(s) are not right:\033[0m\n' "${#PROBLEMS[@]}"
+  for problem in "${PROBLEMS[@]}"; do printf '    • %s\n' "$problem"; done
+fi
+exit "$FAILED"

@@ -147,3 +147,64 @@ describe('BackfillRunner shutdown', () => {
     ).rejects.toBeInstanceOf(AbortedError);
   });
 });
+
+describe('BackfillRunner window coverage', () => {
+  it('covers the window by running out of wallet, not only by passing the cutoff', async () => {
+    /*
+     * The bug this pins, and the loop it would have caused.
+     *
+     * `coveredWindow` used to mean literally "saw a signature older than the
+     * cutoff". A wallet younger than its own lookback never produces one — the
+     * crawl reads every last signature and stops because there are no more —
+     * so a 365-day backfill of a six-month-old wallet wrote every row it should
+     * and reported the window uncovered.
+     *
+     * Nothing records coverage for an uncovered run, and the index refuses any
+     * wallet with no coverage row. So that wallet could never be served, and
+     * once the API started queueing wallets itself it would have been indexed
+     * on every pass, satisfied by none of them, and left sitting at the head of
+     * a queue that drains oldest-first — blocking every wallet behind it.
+     */
+    const h = harness([signatures(10)]);
+
+    const result = await h.runner.run({
+      address: 'wallet',
+      fromSec: NOW - 365 * 86_400,
+    });
+
+    expect(result.transactionsFetched).toBe(10);
+    expect(result.coveredWindow).toBe(true);
+  });
+
+  it('covers the window when a short page ends the history', async () => {
+    // The other end-of-history exit: a full first page, then a partial one.
+    const h = harness([signatures(1000), signatures(5)]);
+
+    const result = await h.runner.run({ address: 'wallet', fromSec: NOW - 365 * 86_400 });
+
+    expect(result.coveredWindow).toBe(true);
+  });
+
+  it('covers the window when it walks past the cutoff', async () => {
+    // A day apart each, so signature 5 is older than a 5-day cutoff.
+    const h = harness([signatures(20, 86_400)]);
+
+    const result = await h.runner.run({ address: 'wallet', fromSec: NOW - 5 * 86_400 });
+
+    expect(result.coveredWindow).toBe(true);
+  });
+
+  it('does not claim coverage when a cap stopped it with history behind', async () => {
+    // The one case that genuinely leaves the window uncovered, and the only one
+    // where refusing to record coverage is the honest answer.
+    const h = harness([signatures(1000, 60), signatures(1000, 60)]);
+
+    const result = await h.runner.run({
+      address: 'wallet',
+      fromSec: NOW - 365 * 86_400,
+      maxTransactions: 10,
+    });
+
+    expect(result.coveredWindow).toBe(false);
+  });
+});

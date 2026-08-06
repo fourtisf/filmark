@@ -46,6 +46,36 @@ export interface ScanCost {
 }
 
 /**
+ * Epoch milliseconds after which a crawl stops and reports what it has.
+ *
+ * The signature and transaction ceilings bound a trace in *calls*; this bounds
+ * it in wall clock, which is the thing the caller is actually waiting on. They
+ * are not the same limit: a provider throttling to a third of its stated rate
+ * turns a budget that fits inside the timeout into one that does not, and the
+ * only sign is a request that never answers. Every stopping point below sets a
+ * flag the report carries, so a trace cut short says so rather than presenting
+ * a partial read as a complete one (§7.2).
+ */
+export type Deadline = number | undefined;
+
+function past(deadline: Deadline): boolean {
+  return deadline !== undefined && Date.now() >= deadline;
+}
+
+/**
+ * Why the signature crawl stopped, which decides what its silence means.
+ *
+ * Only `end_of_history` says the trace saw everything. The other three each
+ * leave older history unread, and one of them — `lookback_cutoff` — is not a
+ * budget at all but the configured window doing exactly what it was asked to
+ * do. That distinction is the whole point: a wallet whose sells were read and
+ * whose buys sit a day past the cutoff produces a ledger of sales with no
+ * purchases, and without this the trace blames the venue parsers or a bot for
+ * something the lookback did.
+ */
+export type CrawlStop = 'end_of_history' | 'lookback_cutoff' | 'signature_budget' | 'time_budget';
+
+/**
  * What was actually read, counted by venue and direction — `pumpfun:buy: 4`.
  *
  * A trace that finds no losses can mean the wallet won, or that it was read
@@ -70,15 +100,41 @@ export interface WalletScan {
   readonly swaps: readonly NormalisedSwap[];
   /** Those swaps counted by venue and direction. */
   readonly census: SwapCensus;
+  /**
+   * Of those swaps, how many got no USD price.
+   *
+   * The quiet failure this exists to make loud. A swap with no price makes its
+   * position `unpriced`, `isAttributable` drops every one of those, and the
+   * trace then reports "nothing closed in the red" — a finding about the wallet
+   * produced by an outage at the price oracle. Counted here so the report can
+   * tell the two apart.
+   */
+  readonly unpricedSwaps: number;
   /** Swaps parsed in the crawled transactions that belonged to someone else. */
   readonly foreignSwaps: number;
   /** Venue instructions refused by a parser, by venue and reason. */
   readonly parseSkips: Readonly<Record<string, number>>;
+  /**
+   * Days of history this scan set out to cover.
+   *
+   * Carried on the scan rather than read off the trace's own limits, because
+   * the two answer paths do not cover the same window. A crawl covers what the
+   * request could afford; the index covers whatever a backfill already paid
+   * for, which is usually more. Reporting the request's setting for both would
+   * describe a 365-day answer as a 90-day one.
+   */
+  readonly windowDays: number;
   /** Unix seconds of the oldest signature the crawl reached. */
   readonly oldestTs: number | null;
   readonly newestTs: number | null;
   /** True when the signature budget ran out before the lookback window did. */
   readonly truncated: boolean;
+  /** Why the crawl stopped. Only `end_of_history` means nothing was left behind. */
+  readonly stoppedAt: CrawlStop;
+  /** True when the time budget, rather than a call ceiling, ended the crawl. */
+  readonly stoppedOnTime: boolean;
+  /** Signatures the crawl reached but never fetched a transaction for. */
+  readonly transactionsUnread: number;
   readonly cost: ScanCost;
 }
 
@@ -91,6 +147,8 @@ export interface TimeInterval {
 export interface PoolScan {
   readonly poolId: string;
   readonly swaps: readonly NormalisedSwap[];
+  /** Of those, how many got no USD price and so carry no weight in netting. */
+  readonly unpricedSwaps: number;
   /** True when a budget stopped the crawl before it covered every interval. */
   readonly incomplete: boolean;
   readonly cost: ScanCost;
@@ -162,35 +220,59 @@ export class ChainScanner {
    * inventory. Those are dropped by the wallet check rather than counted, or a
    * FIFO ledger would open lots the wallet never held.
    */
-  async scanWallet(wallet: string, signal?: AbortSignal): Promise<WalletScan> {
+  async scanWallet(wallet: string, signal?: AbortSignal, deadline?: Deadline): Promise<WalletScan> {
     const cost: ScanCost = { signaturesRead: 0, transactionsFetched: 0 };
     const cutoff = nowSeconds() - daysToSeconds(this.#budget.lookbackDays);
 
-    const { signatures, truncated } = await this.#crawlSignatures(wallet, cutoff, cost, signal);
-    const usable = signatures.filter((entry) => entry.err == null);
+    const crawl = await this.#crawlSignatures(wallet, cutoff, cost, signal, deadline);
+    const usable = crawl.signatures.filter((entry) => entry.err == null);
 
     const parseSkips: Record<string, number> = {};
-    const parsed = await this.#parseSignatures(usable, cost, parseSkips, signal);
+    const read = await this.#parseSignatures(usable, cost, parseSkips, signal, deadline);
     // The venue event names the trader, never the fee payer, so a wallet whose
     // entry legs are placed by a bot or an aggregator sees them land under that
     // bot's address. Those swaps are counted rather than silently dropped.
-    const mine = parsed.filter((entry) => entry.swap.wallet === wallet);
-    const swaps = await this.#normalise(mine, signal);
+    const mine = read.parsed.filter((entry) => entry.swap.wallet === wallet);
+    const normalised = await this.#normalise(mine, signal);
 
-    const times = signatures.map((entry) => entry.blockTime).filter(isNumber);
+    /*
+     * The window that was *read*, not the window that was crawled.
+     *
+     * Signatures are cheap and transactions are not, so a crawl routinely
+     * reaches the cutoff and then runs out of clock partway through fetching
+     * them. Taking the span from every signature seen would then report a year
+     * of coverage over a read that stopped two months in — a configured
+     * intention presented as a measurement, which is the §7.4 failure turned on
+     * the coverage block itself. Signatures come back newest first, so what was
+     * read is the head of the list.
+     */
+    const readSignatures = usable.slice(0, usable.length - read.unread);
+    const times = readSignatures.map((entry) => entry.blockTime).filter(isNumber);
 
     return {
       wallet,
-      swaps,
-      census: censusOf(swaps),
+      swaps: normalised.swaps,
+      census: censusOf(normalised.swaps),
+      unpricedSwaps: normalised.unpriced,
       // Parsed swaps in the wallet's own transactions that another wallet made.
       // A large number beside an empty census means the trades are being made
       // through something else — a bot or a router whose own account signs.
-      foreignSwaps: parsed.length - mine.length,
+      foreignSwaps: read.parsed.length - mine.length,
       parseSkips,
+      windowDays: this.#budget.lookbackDays,
       oldestTs: times.length > 0 ? Math.min(...times) : null,
       newestTs: times.length > 0 ? Math.max(...times) : null,
-      truncated,
+      // Either ceiling leaves history behind, so both mean the same thing to a
+      // reader: there is more of this wallet than the trace covers. The
+      // lookback cutoff is deliberately not one of them — it leaves history
+      // behind too, but by instruction rather than by running out, and
+      // `stoppedAt` is what carries that difference.
+      truncated: crawl.stoppedAt === 'signature_budget' || read.unread > 0,
+      // A crawl that reached the cutoff but whose transactions were then cut
+      // short by the clock did not really cover the window it claims to.
+      stoppedAt: read.unread > 0 ? 'time_budget' : crawl.stoppedAt,
+      stoppedOnTime: crawl.stoppedAt === 'time_budget' || read.stoppedOnTime,
+      transactionsUnread: read.unread,
       cost,
     };
   }
@@ -209,14 +291,15 @@ export class ChainScanner {
     intervals: readonly TimeInterval[],
     budget: PoolCrawlBudget,
     signal?: AbortSignal,
+    deadline?: Deadline,
   ): Promise<PoolScan> {
     const cost: ScanCost = { signaturesRead: 0, transactionsFetched: 0 };
     if (intervals.length === 0) {
-      return { poolId, swaps: [], incomplete: false, cost };
+      return { poolId, swaps: [], unpricedSwaps: 0, incomplete: false, cost };
     }
-    if (budget.signaturePages <= 0 || budget.transactions <= 0) {
-      // Earlier pools spent the trace's allowance. Reported, never faked.
-      return { poolId, swaps: [], incomplete: true, cost };
+    if (budget.signaturePages <= 0 || budget.transactions <= 0 || past(deadline)) {
+      // Earlier pools spent the trace's allowance, or its clock. Reported, never faked.
+      return { poolId, swaps: [], unpricedSwaps: 0, incomplete: true, cost };
     }
 
     const merged = mergeIntervals(intervals);
@@ -225,8 +308,13 @@ export class ChainScanner {
 
     let before: string | undefined;
     let reachedEarliest = false;
+    let stoppedOnTime = false;
 
     while (budget.signaturePages > 0) {
+      if (past(deadline)) {
+        stoppedOnTime = true;
+        break;
+      }
       const page = await this.#rpc.getSignaturesForAddress(poolId, {
         limit: this.#budget.signaturePageSize,
         ...(before === undefined ? {} : { before }),
@@ -258,16 +346,18 @@ export class ChainScanner {
     const capped = wanted.slice(0, budget.transactions);
     budget.transactions -= capped.length;
 
-    const parsed = await this.#parseSignatures(capped, cost, {}, signal);
-    const swaps = await this.#normalise(
-      parsed.filter((entry) => entry.swap.poolId === poolId),
+    const read = await this.#parseSignatures(capped, cost, {}, signal, deadline);
+    const normalised = await this.#normalise(
+      read.parsed.filter((entry) => entry.swap.poolId === poolId),
       signal,
     );
 
     return {
       poolId,
-      swaps,
-      incomplete: !reachedEarliest || wanted.length > capped.length,
+      swaps: normalised.swaps,
+      unpricedSwaps: normalised.unpriced,
+      incomplete:
+        !reachedEarliest || wanted.length > capped.length || stoppedOnTime || read.unread > 0,
       cost,
     };
   }
@@ -277,11 +367,14 @@ export class ChainScanner {
     cutoffTs: number,
     cost: ScanCost,
     signal?: AbortSignal,
-  ): Promise<{ signatures: SignatureInfo[]; truncated: boolean }> {
+    deadline?: Deadline,
+  ): Promise<{ signatures: SignatureInfo[]; stoppedAt: CrawlStop }> {
     const signatures: SignatureInfo[] = [];
     let before: string | undefined;
 
     while (signatures.length < this.#budget.maxSignatures) {
+      if (past(deadline)) return { signatures, stoppedAt: 'time_budget' };
+
       const remaining = this.#budget.maxSignatures - signatures.length;
       const page = await this.#rpc.getSignaturesForAddress(address, {
         limit: Math.min(this.#budget.signaturePageSize, remaining),
@@ -289,11 +382,13 @@ export class ChainScanner {
         ...(signal === undefined ? {} : { signal }),
       });
       cost.signaturesRead += page.length;
-      if (page.length === 0) return { signatures, truncated: false };
+      // The address itself ran out. This is the only stop that means the trace
+      // saw everything there is to see.
+      if (page.length === 0) return { signatures, stoppedAt: 'end_of_history' };
 
       for (const entry of page) {
         if (entry.blockTime !== null && entry.blockTime < cutoffTs) {
-          return { signatures, truncated: false };
+          return { signatures, stoppedAt: 'lookback_cutoff' };
         }
         signatures.push(entry);
       }
@@ -301,9 +396,7 @@ export class ChainScanner {
       before = (page[page.length - 1] as SignatureInfo).signature;
     }
 
-    // Stopped on the budget rather than on the cutoff: there is more history
-    // behind this, and the trace has to say so.
-    return { signatures, truncated: true };
+    return { signatures, stoppedAt: 'signature_budget' };
   }
 
   /**
@@ -320,12 +413,27 @@ export class ChainScanner {
     cost: ScanCost,
     skips: Record<string, number>,
     signal?: AbortSignal,
-  ): Promise<ParsedWithTime[]> {
+    deadline?: Deadline,
+  ): Promise<ParseRun> {
     const out: ParsedWithTime[] = [];
-    if (signatures.length === 0) return out;
+    if (signatures.length === 0) return { parsed: out, unread: 0, stoppedOnTime: false };
 
-    const size = Math.max(1, this.#rpc.transactionBatchSize);
+    // A window, not a batch. Chunking to the batch width handed the client one
+    // batch per call, so the overlap inside it had nothing to overlap with and
+    // the crawl waited out every round trip — the configured rate was never
+    // reached and no counter said so. The deadline is now checked once per
+    // window instead of once per batch, which is the price of the overlap.
+    const size = Math.max(1, this.#rpc.transactionWindowSize);
+    let read = 0;
     for (const group of chunk([...signatures], size)) {
+      // Signatures arrive newest first, so stopping here drops the oldest — the
+      // same shape as a shorter lookback, which the report already knows how to
+      // describe. Stopping mid-crawl and returning what was read beats spending
+      // the rest of the budget on a request the caller has already abandoned.
+      if (past(deadline)) {
+        return { parsed: out, unread: signatures.length - read, stoppedOnTime: true };
+      }
+      read += group.length;
       const responses = await this.#rpc.getTransactions(
         group.map((entry) => entry.signature),
         signal,
@@ -359,7 +467,7 @@ export class ChainScanner {
       });
     }
 
-    return out;
+    return { parsed: out, unread: 0, stoppedOnTime: false };
   }
 
   /**
@@ -375,8 +483,8 @@ export class ChainScanner {
   async #normalise(
     parsed: readonly ParsedWithTime[],
     signal?: AbortSignal,
-  ): Promise<NormalisedSwap[]> {
-    if (parsed.length === 0) return [];
+  ): Promise<{ swaps: NormalisedSwap[]; unpriced: number }> {
+    if (parsed.length === 0) return { swaps: [], unpriced: 0 };
 
     const times = parsed.map((entry) => entry.blockTime).filter(isNumber);
     if (times.length > 0 && this.#warm !== undefined) {
@@ -413,6 +521,7 @@ export class ChainScanner {
     }
 
     const out: NormalisedSwap[] = [];
+    let unpriced = 0;
     for (const entry of parsed) {
       const blockTime = entry.blockTime;
       if (blockTime === null) continue;
@@ -427,6 +536,7 @@ export class ChainScanner {
         quoteDecimals,
         blockTime,
       );
+      if (price === null) unpriced += 1;
 
       out.push({
         signature: entry.swap.signature,
@@ -451,7 +561,7 @@ export class ChainScanner {
       });
     }
 
-    return out;
+    return { swaps: out, unpriced };
   }
 }
 
@@ -459,6 +569,14 @@ interface ParsedWithTime {
   readonly swap: ParsedSwap;
   readonly ctx: TxContext;
   readonly blockTime: number | null;
+}
+
+/** What one pass of `#parseSignatures` read, and what it left behind. */
+interface ParseRun {
+  readonly parsed: ParsedWithTime[];
+  /** Signatures never fetched because the time budget ran out first. */
+  readonly unread: number;
+  readonly stoppedOnTime: boolean;
 }
 
 /** Collapses overlapping intervals so a pool crawl does not fetch a slot twice. */

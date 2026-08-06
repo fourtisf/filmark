@@ -41,6 +41,9 @@ importers:
       '@exitliquidity/attribution':
         specifier: workspace:*
         version: link:../../packages/attribution
+      '@exitliquidity/clickhouse':
+        specifier: workspace:*
+        version: link:../../packages/clickhouse
       '@exitliquidity/core':
         specifier: workspace:*
         version: link:../../packages/core

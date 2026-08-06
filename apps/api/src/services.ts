@@ -1,7 +1,16 @@
 import { createLogger, requireRpcUrl, type Config, type Logger } from '@exitliquidity/core';
+import {
+  SwapRepository,
+  WalletCoverageRepository,
+  WalletIndexRequestRepository,
+  clickHouseOptionsFromConfig,
+  createClickHouseClient,
+} from '@exitliquidity/clickhouse';
 import { PythClient } from '@exitliquidity/pricing';
 import { SolanaRpcClient } from '@exitliquidity/solana';
 import { ResultCache, Semaphore } from './cache.js';
+import { ClickHouseIndexRequester } from './index-request.js';
+import { ClickHouseWalletSource } from './index-source.js';
 import { createApiMetrics, type ApiMetrics } from './metrics.js';
 import { TokenMetadataResolver } from './metadata.js';
 import { SolUsdCache } from './prices.js';
@@ -15,6 +24,10 @@ export interface ApiServices {
   readonly cache: ResultCache<TraceReport>;
   readonly semaphore: Semaphore;
   readonly metrics: ApiMetrics;
+  /** Exposed so startup can prove the feed answers before a trace needs it. */
+  readonly prices: SolUsdCache;
+  /** True when a swap index is wired in and may answer instead of the chain. */
+  readonly indexed: boolean;
   readonly rpcEndpoint: string;
   readonly corsOrigins: readonly string[];
 }
@@ -48,6 +61,7 @@ export function createServices(config: Config): ApiServices {
       benchmarksUrl: config.PYTH_BENCHMARKS_URL,
       hermesUrl: config.PYTH_HERMES_URL,
       feedId: config.PYTH_SOL_USD_FEED_ID,
+      maxRequestsPerSecond: config.PYTH_MAX_RPS,
       logger,
     }),
     maxStalenessSec: config.PRICE_MAX_STALENESS_SEC,
@@ -68,6 +82,43 @@ export function createServices(config: Config): ApiServices {
     logger,
   });
 
+  /*
+   * The index, when it is there.
+   *
+   * Constructed rather than required: an API pointed at a ClickHouse that does
+   * not exist would fail on a dependency the live path never needed, so this is
+   * opt-in and the crawl remains the floor. `ClickHouseWalletSource` refuses to
+   * answer for a wallet no backfill has covered, so switching it on cannot make
+   * a trace narrower — only cheaper.
+   */
+  const store = config.API_USE_INDEX
+    ? (() => {
+        const clickhouse = createClickHouseClient(clickHouseOptionsFromConfig(config));
+        return {
+          index: new ClickHouseWalletSource({
+            swaps: new SwapRepository(clickhouse),
+            coverage: new WalletCoverageRepository(clickhouse),
+            logger,
+          }),
+          /*
+           * The other half of the same switch, and the half that makes it
+           * self-filling.
+           *
+           * An index nobody populates answers for nothing, and populating it by
+           * hand is a command per wallet on a server — which is exactly the
+           * ritual this exists to remove. A trace the chain could not answer
+           * properly now asks for that wallet to be read out of band, and the
+           * ingest worker drains those requests.
+           */
+          requests: new ClickHouseIndexRequester({
+            repository: new WalletIndexRequestRepository(clickhouse),
+            days: config.INDEX_REQUEST_DAYS,
+            logger,
+          }),
+        };
+      })()
+    : undefined;
+
   const traces = new TraceService({
     scanner,
     metadata: new TokenMetadataResolver({ rpc, logger }),
@@ -76,6 +127,9 @@ export function createServices(config: Config): ApiServices {
       maxPositions: config.TRACE_MAX_POSITIONS,
       maxLegsPerPosition: config.TRACE_MAX_LEGS_PER_POSITION,
     },
+    // Read per trace, not captured: the series grows as traces warm it.
+    priceSeries: () => prices.seriesRange,
+    ...(store === undefined ? {} : { index: store.index, indexRequests: store.requests }),
     logger,
   });
 
@@ -88,6 +142,8 @@ export function createServices(config: Config): ApiServices {
     }),
     semaphore: new Semaphore({ limit: config.API_MAX_CONCURRENT_TRACES }),
     metrics: createApiMetrics(),
+    prices,
+    indexed: store !== undefined,
     rpcEndpoint: rpc.endpoint,
     corsOrigins: parseOrigins(config.API_CORS_ORIGINS),
   };

@@ -1,7 +1,7 @@
 import { Queue, Worker, type Job, type JobsOptions } from 'bullmq';
 import { Redis } from 'ioredis';
 import { describeError, silentLogger, type Logger } from '@exitliquidity/core';
-import type { BackfillRequest, BackfillResult, BackfillRunner } from './runner.js';
+import type { BackfillRequest, BackfillResult } from './runner.js';
 
 export const BACKFILL_QUEUE = 'backfill';
 
@@ -54,7 +54,17 @@ export async function enqueueBackfill(
 
 export interface BackfillWorkerOptions {
   readonly connection: Redis;
-  readonly runner: BackfillRunner;
+  /**
+   * What one job means.
+   *
+   * A function rather than a `BackfillRunner`, because the runner is only the
+   * crawl. A backfill is the crawl plus the price fill before it, the flush
+   * after it, and the `wallet_coverage` row that is the whole reason a later
+   * trace can be answered from the index at all. Handing this a runner is how
+   * the queue came to do a third of the job perfectly and leave no trace of it
+   * anybody could read.
+   */
+  readonly run: (request: BackfillRequest) => Promise<BackfillResult>;
   readonly concurrency?: number;
   readonly logger?: Logger;
 }
@@ -68,7 +78,7 @@ export function createBackfillWorker(
     BACKFILL_QUEUE,
     async (job) => {
       logger.info({ jobId: job.id, address: job.data.address }, 'backfill job started');
-      return options.runner.run(job.data);
+      return options.run(job.data);
     },
     { connection: options.connection, concurrency: options.concurrency ?? 4 },
   );

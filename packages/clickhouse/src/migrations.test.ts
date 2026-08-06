@@ -34,6 +34,8 @@ describe('bundled migrations', () => {
       '003_ingest_checkpoints.sql',
       '004_mints.sql',
       '005_ingest_skips.sql',
+      '006_wallet_coverage.sql',
+      '007_wallet_index_requests.sql',
     ]);
   });
 
