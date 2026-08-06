@@ -122,10 +122,20 @@ export async function backfill(
 
   let pricesReady = options.withPrices === false;
   if (options.withPrices !== false) {
+    const budget = AbortSignal.timeout(services.config.BACKFILL_PRICE_TIMEOUT_MS);
     try {
       // Priced rows require the series to already cover the window; doing it
       // after the crawl would leave every row written unpriced.
-      await services.prices.ensureRange(fromSec, nowSeconds(), controller.signal);
+      //
+      // Bounded, because Benchmarks meters over a window and answers
+      // `Retry-After: 59` on each one it refuses. A year is 106 windows, so a
+      // client that obeys literally spends hours before a single transaction
+      // is read — which looks exactly like a hung backfill.
+      await services.prices.ensureRange(
+        fromSec,
+        nowSeconds(),
+        AbortSignal.any([controller.signal, budget]),
+      );
       pricesReady = true;
     } catch (error) {
       /*
@@ -136,12 +146,12 @@ export async function backfill(
        * all. Unpriced rows are the lesser loss by a wide margin — an unpriced
        * swap is still a real swap — and both tables are `ReplacingMergeTree`
        * keyed on the swap's own identity, so re-running once the feed recovers
-       * replaces these rows rather than duplicating them. The window Pyth did
-       * manage is already stored, so each run converges.
+       * replaces these rows rather than duplicating them. Whatever minutes Pyth
+       * did hand over are already stored, so each run converges.
        */
       services.logger.warn(
-        { err: describeError(error) },
-        'the SOL/USD series could not be filled; crawling anyway and writing what is found unpriced. Re-run this backfill once the feed recovers and the rows will be replaced with priced ones',
+        { err: describeError(error), ranOutOfTime: budget.aborted },
+        'the SOL/USD series was not filled across the whole window; crawling anyway. Swaps landing in minutes the series does reach are still priced, the rest are written unpriced. Re-run this backfill later and those rows are replaced with priced ones',
       );
     }
   }

@@ -81,6 +81,16 @@ const configSchema = z.object({
   BACKFILL_SIGNATURE_PAGE_SIZE: z.coerce.number().int().min(1).max(1000).default(1000),
   /** Transactions fetched per batch inside a backfill job. */
   BACKFILL_TRANSACTION_BATCH: positiveInt.default(20),
+  /**
+   * Longest the SOL/USD fill may hold up a backfill before it crawls anyway.
+   *
+   * Benchmarks meters over a window and answers `Retry-After: 59`, and a year
+   * is 106 of those windows — obeyed literally that is hours of a backfill
+   * spent before a single transaction is read. The swaps are the part nobody
+   * can reconstruct later; prices are stored separately, replace in place, and
+   * every re-run resumes. So the crawl gets a bounded wait and then goes.
+   */
+  BACKFILL_PRICE_TIMEOUT_MS: positiveInt.default(300_000),
 
   METRICS_PORT: port.default(9464),
   METRICS_ENABLED: booleanish.default(true),
