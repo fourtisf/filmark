@@ -165,6 +165,20 @@ export class RateLimiter {
   }
 
   /**
+   * Hold every acquisition back by `ms`, on the far end's own instruction.
+   *
+   * `backOff` changes the *rate*, which is the right answer to a per-second
+   * ceiling and the wrong one to a quota measured over a minute: an endpoint
+   * answering `Retry-After: 58` is not asking to be asked more slowly, it is
+   * asking to be left alone until the window rolls. Halving a rate that is
+   * already under one request a second does nothing it wants. This does.
+   */
+  pause(ms: number): void {
+    if (ms <= 0) return;
+    this.#next = Math.max(this.#next, Date.now() + ms);
+  }
+
+  /**
    * A call came back clean. Ease towards the configured rate.
    *
    * Slowly, and deliberately: recovering as fast as it backed off would put the

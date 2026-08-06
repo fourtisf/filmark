@@ -113,22 +113,42 @@ export interface BackfillOptions extends BackfillRequest {
 export async function backfill(
   services: Services,
   options: BackfillOptions,
-): Promise<BackfillResult> {
+): Promise<BackfillResult & { pricesReady: boolean }> {
   const runner = createBackfillRunner(services);
   const controller = shutdownSignal(services.logger);
 
   const fromSec =
     options.fromSec ?? nowSeconds() - daysToSeconds(services.config.BACKFILL_DEFAULT_DAYS);
 
+  let pricesReady = options.withPrices === false;
   if (options.withPrices !== false) {
-    // Priced rows require the series to already cover the window; doing it
-    // after the crawl would leave every row written unpriced.
-    await services.prices.ensureRange(fromSec, nowSeconds(), controller.signal);
+    try {
+      // Priced rows require the series to already cover the window; doing it
+      // after the crawl would leave every row written unpriced.
+      await services.prices.ensureRange(fromSec, nowSeconds(), controller.signal);
+      pricesReady = true;
+    } catch (error) {
+      /*
+       * A price feed that refuses must not cost the crawl.
+       *
+       * It did: `ensureRange` threw before a single transaction was read, so a
+       * year-long backfill against a rate-limited Benchmarks wrote nothing at
+       * all. Unpriced rows are the lesser loss by a wide margin — an unpriced
+       * swap is still a real swap — and both tables are `ReplacingMergeTree`
+       * keyed on the swap's own identity, so re-running once the feed recovers
+       * replaces these rows rather than duplicating them. The window Pyth did
+       * manage is already stored, so each run converges.
+       */
+      services.logger.warn(
+        { err: describeError(error) },
+        'the SOL/USD series could not be filled; crawling anyway and writing what is found unpriced. Re-run this backfill once the feed recovers and the rows will be replaced with priced ones',
+      );
+    }
   }
 
   const result = await runner.run({ ...options, fromSec }, controller.signal);
   await services.writer.flush();
-  return result;
+  return { ...result, pricesReady };
 }
 
 export async function enqueue(services: Services, request: BackfillRequest): Promise<string> {

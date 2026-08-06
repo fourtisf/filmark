@@ -29,6 +29,9 @@ const MAX_BARS_PER_REQUEST = 5000;
 /** Benchmarks requests in flight at once. Shared public endpoint; keep it modest. */
 const BENCHMARKS_CONCURRENCY = 4;
 
+/** Longest a `Retry-After` may hold the client back, so nobody can park it. */
+const MAX_PAUSE_MS = 120_000;
+
 /**
  * The request windows covering `[fromSec, toSec]`, computed rather than listed.
  *
@@ -257,10 +260,28 @@ export class PythClient {
             // Same bargain as the RPC client: the endpoint's refusal outranks
             // the configured rate, and retrying at the pace just rejected only
             // spends the attempts finding that out again.
-            if (response.status === 429 && this.#limiter.backOff()) {
+            if (response.status === 429) {
+              /*
+               * Benchmarks meters over a window, not per second: it answers
+               * `Retry-After: 58`. Halving a rate already under one request a
+               * second is not what it is asking for — it wants to be left alone
+               * until the window rolls, and every call queued behind this one
+               * would otherwise walk straight into the same wall. Honour the
+               * number it gave, bounded so a provider cannot park the process.
+               */
+              const wait = Math.min(
+                MAX_PAUSE_MS,
+                Number(response.headers.get('retry-after') ?? 0) * 1000,
+              );
+              this.#limiter.pause(wait);
+              this.#limiter.backOff();
               this.#logger.warn(
-                { url: url.pathname, rate: Number(this.#limiter.effectiveRate.toFixed(2)) },
-                'Pyth rate limited; slowing to below the configured rate',
+                {
+                  url: url.pathname,
+                  rate: Number(this.#limiter.effectiveRate.toFixed(2)),
+                  pausedMs: wait,
+                },
+                'Pyth rate limited; pausing for as long as it asked and slowing below the configured rate',
               );
             }
             throw new UpstreamError(`Pyth request failed with HTTP ${response.status}`, {

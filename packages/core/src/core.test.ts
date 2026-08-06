@@ -284,6 +284,28 @@ describe('RateLimiter', () => {
     expect(limiter.effectiveRate).toBeCloseTo(100, 5);
   });
 
+  it('honours a stated wait, which halving a rate cannot express', async () => {
+    // An endpoint answering `Retry-After: 58` is not asking to be asked more
+    // slowly; it wants to be left alone until its window rolls. Halving a rate
+    // already under one request a second does nothing it asked for.
+    const limiter = new RateLimiter(1000); // 1ms per unit
+    limiter.pause(120);
+
+    const started = Date.now();
+    await limiter.acquire();
+    expect(Date.now() - started).toBeGreaterThanOrEqual(100);
+  });
+
+  it('ignores a pause of nothing', async () => {
+    const limiter = new RateLimiter(1000);
+    limiter.pause(0);
+    limiter.pause(-5);
+
+    const started = Date.now();
+    await limiter.acquire();
+    expect(Date.now() - started).toBeLessThan(50);
+  });
+
   it('holds the next slot back when it backs off', async () => {
     // The calls already queued behind a rejection are exactly the ones that
     // would otherwise arrive at the rate that was just refused.
