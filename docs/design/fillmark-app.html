@@ -153,6 +153,29 @@ h1 em{font-style:normal;font-weight:300;color:var(--text3)}
 .proto b{color:var(--text);font-weight:600}
 .nd-a{font-family:var(--mono);font-size:12.5px;color:var(--text);word-break:break-all}
 
+/* The offer at the bottom of every empty state, and the strip that stands over
+   the sample once it is on screen.
+
+   A console that answers "—" is telling the truth and telling it badly: the
+   reader has no idea what a full answer even looks like, so an honest empty
+   state and a broken product are the same screen to them. The sample fixes
+   that without touching the rule — drawn figures, reachable only by asking for
+   them, and never presented as an answer about the address in the box.
+
+   The strip is not decoration. It is why this is allowed to exist at all, so it
+   sits above the figures rather than under them, carries the accent that means
+   "read me" everywhere else on the site, and cannot be dismissed. */
+.samp-ask{margin-top:26px;padding-top:22px;border-top:1px solid var(--line2)}
+.samp-ask button{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--text);border:1px solid var(--line2);
+  padding:11px 18px;background:none;cursor:pointer}
+.samp-ask button:hover{border-color:var(--text3)}
+.samp-ask small{display:block;margin-top:12px;font-size:12.5px;color:var(--text3);
+  font-weight:300}
+.samp-strip{margin-top:26px;border:1px solid var(--ext2);border-left-width:2px;
+  padding:13px 18px;font-size:13px;font-weight:300;color:var(--text2);max-width:780px}
+.samp-strip b{color:var(--text);font-weight:600}
+
 .empty{margin-top:46px;border:1px dashed var(--line2);padding:44px 34px;max-width:640px}
 .empty p{color:var(--text2);font-weight:300;max-width:420px}
 .empty .go{margin-top:22px;display:inline-block;padding:12px 22px}
@@ -392,6 +415,7 @@ footer{margin-top:88px;padding:26px 0 76px;border-top:1px solid var(--line);
     <button class="chip" data-w="w2">4Bnv…Ha7Z</button></div>
   <div class="state" id="state" role="status" aria-live="polite"></div>
   <div id="nodata" hidden></div>
+  <div class="samp-strip" role="note" id="samp" hidden></div>
 
   <div id="out" class="fade" hidden>
     <div class="sum">
@@ -802,11 +826,33 @@ const lookup=v=>Object.keys(DATA).find(k=>DATA[k].addr===v);
 const setState=html=>{$("#state").innerHTML=html};
 function clearOut(){
   $("#out").hidden=true;$("#out").classList.remove("in");$("#nodata").hidden=true;
+  // The sample label goes with the sample. Left standing over a real answer it
+  // would call a measurement drawn; left off a sample it would do the reverse,
+  // which is the one that matters.
+  $("#samp").hidden=true;
 }
 
 /* An empty state that answers about the address it was handed and nothing else.
    The address goes in as text, never as markup: it arrives from a paste box and
    from the query string, and neither is a place to trust. */
+/* Whether what is on screen is drawn rather than measured.
+   Read by `paint`, and cleared by every path that starts a real trace, so it
+   can never survive from a sample into an answer about somebody's wallet. */
+let SAMPLE=false;
+
+/* The one honest way to fill the figures in.
+   Offered on every empty state, because that is where the reader is asking
+   "what would this even have shown me" — and answering that with drawn data
+   they asked to see is a different act from answering their address with it.
+   Only when an engine is configured: with no engine the whole page is already
+   labelled a prototype and a second label would be noise. */
+const sampleAsk=()=>!LIVE?"":`
+  <div class="samp-ask">
+    <button type="button" id="samp-go">See a sample trace</button>
+    <small>Drawn figures for a wallet that does not exist, so you can see the shape of a
+    full answer. Nothing in it is measured, and it says so on screen throughout.</small>
+  </div>`;
+
 function nothing(kick,head,body,addr){
   clearOut();
   const box=$("#nodata");
@@ -814,8 +860,10 @@ function nothing(kick,head,body,addr){
     <div class="sec-k">${kick}</div>
     <h2 style="margin-top:12px;font-size:26px">${head}</h2>
     ${addr?'<p><code class="nd-a" id="nd-a"></code></p>':""}
-    ${body}</div>`;
+    ${body}${sampleAsk()}</div>`;
   if(addr)box.querySelector("#nd-a").textContent=addr;
+  const go=box.querySelector("#samp-go");
+  if(go)go.addEventListener("click",()=>{SAMPLE=true;traceDemo("w1")});
   box.hidden=false;
 }
 
@@ -837,6 +885,9 @@ function noIndex(v){
 
 function trace(key){
   if(busy)return;
+  // Anything that starts from the box is an answer about an address, so the
+  // sample label is dropped here rather than in each branch below.
+  SAMPLE=false;
   const v=key?DATA[key].addr:$("#addr").value.trim();
   if(!v){setState("Paste a wallet address first");$("#addr").focus();return}
   if(!BASE58.test(v)){setState("That is not a Solana address");clearOut();return}
@@ -1039,7 +1090,9 @@ function renderReport(r){
 function paint(m,note){
   M=m;
   if(M.ranked.length===0){setState("Trace complete · <i>no counterparties</i>");return}
-  TRACES+=1;renderQuota();
+  // A sample is not a trace and must not spend one. Charging the free tier for
+  // the button that explains the product is a toll on the explanation.
+  if(!SAMPLE){TRACES+=1;renderQuota()}
   $("#active").textContent=m.d.short;
   sankey(M);ledger(M);
   $("#s1").textContent=m.d.span;
@@ -1049,9 +1102,23 @@ function paint(m,note){
   const vals=[M.net,m.d.closed,M.ranked.length,M.ranked[0].v];
   $$("#out .st-v[data-n]").forEach((el,i)=>count(el,vals[i]));
   requestAnimationFrame(()=>$("#out").classList.add("in"));
-  setState(gated()
-    ? "Trace complete · <i>counterparty addresses hidden — free limit reached</i>"
-    : "Trace complete · <i>"+esc(note)+"</i>");
+  /* The sample says so in both places a reader looks: the status line they
+     just watched tick, and a strip that stays over the figures for as long as
+     they are up. Two labels for one screen is not belt and braces here — the
+     status line scrolls away the moment they read the ledger, and the ledger
+     is the part that looks like a finding. */
+  const samp=$("#samp");
+  samp.hidden=!SAMPLE;
+  if(SAMPLE){
+    samp.innerHTML=`<b>Sample trace — none of this was measured.</b> Every figure below is
+      drawn for layout, for a wallet that does not exist. It is here so the shape of a full
+      answer is visible; paste your own address above for a real one, limits and all.`;
+  }
+  setState(SAMPLE
+    ? "Sample trace · <i>drawn figures, nothing measured</i>"
+    : gated()
+      ? "Trace complete · <i>counterparty addresses hidden — free limit reached</i>"
+      : "Trace complete · <i>"+esc(note)+"</i>");
   PINNED=new Set(M.ranked.slice(0,3).map(p=>p.i));
 
   if(m.report){$("#cov").innerHTML=queuedHtml(m.report)+coverageHtml(m.report);$("#cov-sec").hidden=false}
