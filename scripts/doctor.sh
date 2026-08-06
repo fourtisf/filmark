@@ -66,25 +66,35 @@ done
 
 # ── is the running API the build in this checkout? ────────────────────────
 head_ "Is the API running this build?"
-# The question every other check depends on, and the one pm2 cannot answer:
-# `pm2 restart` succeeds whether or not the build under it changed.
-RUNNING_SINCE="$(pm2 jlist 2>/dev/null |
-  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const p=JSON.parse(s).find(x=>x.name===process.argv[1]);process.stdout.write(String(p?.pm2_env?.pm_uptime??0))}catch{process.stdout.write("0")}})' "$APP")"
-BUILT_AT=0
-[ -f "$REPO/apps/api/dist/main.js" ] &&
-  BUILT_AT="$(( $(stat -c %Y "$REPO/apps/api/dist/main.js" 2>/dev/null || echo 0) * 1000 ))"
-
-if [ "$BUILT_AT" -eq 0 ]; then
-  bad "apps/api/dist/main.js does not exist — pnpm run build has never succeeded here"
-elif [ "${RUNNING_SINCE:-0}" -eq 0 ]; then
-  # Unknown is not the same as wrong, and reporting it as wrong would send
-  # somebody chasing a stale build that is not stale.
-  note "could not read the API's uptime from pm2 — skipping this check"
-elif [ "$RUNNING_SINCE" -ge "$BUILT_AT" ]; then
-  ok "the API started after the last build"
+# Ask the API, do not infer.
+#
+# The previous version of this check compared pm2's uptime against the mtime of
+# apps/api/dist/main.js, and passed while the API served code months older —
+# because it assumed the process was running that file. It is the assumption
+# that was wrong, not the arithmetic. /healthz now reports which module was
+# actually loaded and when it was written, so this reads a fact.
+HEALTH="$(curl -fsS --max-time 5 http://127.0.0.1:8080/healthz 2>/dev/null)"
+if [ -z "$HEALTH" ]; then
+  bad "the API is not answering on 127.0.0.1:8080"
+elif ! grep -q '"module"' <<<"$HEALTH"; then
+  bad "the API predates this build — /healthz does not report which module it runs"
+  note "It cannot have the deep-read queue either. Rebuild and restart:"
+  note "  cd $REPO && pnpm install --frozen-lockfile && pnpm run build && pm2 restart $APP --update-env"
 else
-  bad "the API has been up since before the last build — it is serving older code"
-  note "pm2 restart $APP --update-env"
+  RUNNING_MODULE="$(sed -n 's/.*"module":"\([^"]*\)".*/\1/p' <<<"$HEALTH")"
+  RUNNING_BUILT="$(sed -n 's/.*"builtAt":"\([^"]*\)".*/\1/p' <<<"$HEALTH")"
+  note "module   ${RUNNING_MODULE:-unknown}"
+  note "built    ${RUNNING_BUILT:-unknown}"
+
+  NEWEST="$(find "$REPO/apps" "$REPO/packages" -name '*.ts' -newermt "${RUNNING_BUILT:-@0}" \
+    -not -path '*/node_modules/*' -not -path '*/dist/*' -not -name '*.test.ts' 2>/dev/null | head -3)"
+  if [ -n "$RUNNING_BUILT" ] && [ -n "$NEWEST" ]; then
+    bad "source files are newer than the running build — it is serving older code"
+    sed "s|$REPO/|  |" <<<"$NEWEST" | sed 's/^/    /'
+    note "cd $REPO && pnpm run build && pm2 restart $APP --update-env"
+  else
+    ok "the running module is at least as new as the sources"
+  fi
 fi
 
 # ── the console the browser gets ──────────────────────────────────────────

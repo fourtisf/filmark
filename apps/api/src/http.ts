@@ -21,6 +21,13 @@ export interface HttpServerOptions {
   /** Allowed browser origins. `['*']` allows any. Empty sends no CORS header. */
   readonly corsOrigins: readonly string[];
   readonly traceTimeoutMs: number;
+  /**
+   * Which module is running and when it was written, served on `/healthz`.
+   *
+   * Optional so tests need not supply it, absent rather than faked when the
+   * file cannot be stat'd — a build stamp that guesses is worse than none.
+   */
+  readonly build?: { module: string; builtAt: string | null };
   readonly logger?: Logger;
   readonly isReady?: () => boolean;
 }
@@ -75,7 +82,10 @@ export function createHttpServer(options: HttpServerOptions): Server {
     switch (path) {
       case '/healthz':
         count(options, path, 200);
-        send(response, 200, { status: 'ok' });
+        // The build travels with the health check because that is the one
+        // endpoint anything monitoring this already calls, and "is it up" and
+        // "is it the build I deployed" are asked at the same moment.
+        send(response, 200, { status: 'ok', ...(options.build ?? {}) });
         return;
 
       case '/readyz': {

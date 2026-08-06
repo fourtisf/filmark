@@ -9,6 +9,7 @@ import {
   type PoolScan,
   type WalletScan,
 } from './scan.js';
+import type { WalletIndexRequester } from './index-request.js';
 import type { IndexedWalletSource } from './index-source.js';
 import { TraceService } from './trace.js';
 
@@ -896,5 +897,66 @@ describe('TraceService partial basis loss', () => {
 
     expect(report.coverage.excluded.unknown_basis).toBe(1);
     expect(report.notes.join(' ')).toContain('excluded from every figure below');
+  });
+});
+
+describe('TraceService index requests', () => {
+  /* The seam nothing covered: the decision and the write were both tested, and
+     whether the service ever calls them was not. */
+  function requester(answer = true): WalletIndexRequester & { seen: string[] } {
+    const seen: string[] = [];
+    return {
+      seen,
+      request: async (report) => {
+        seen.push(report.wallet);
+        return answer;
+      },
+    };
+  }
+
+  function serviceWith(
+    wallet: readonly NormalisedSwap[],
+    indexRequests: WalletIndexRequester,
+    overrides: ScanOverrides = {},
+  ): TraceService {
+    return new TraceService({
+      scanner: scannerFor(wallet, wallet, overrides),
+      metadata: NO_METADATA,
+      limits: { lookbackDays: 90, maxPositions: 12, maxLegsPerPosition: 6 },
+      indexRequests,
+    });
+  }
+
+  it('asks for a deep read of a wallet whose entry legs were not read', async () => {
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+    const req = requester();
+
+    const report = await serviceWith([sell], req, {
+      walletScan: { stoppedAt: 'lookback_cutoff' },
+    }).trace(VICTIM);
+
+    expect(report.status).toBe('unreadable_history');
+    expect(req.seen).toEqual([VICTIM]);
+    expect(report.coverage.deepReadRequested).toBe(true);
+    expect(report.notes.join(' ')).toContain('queued for a full read');
+  });
+
+  it('does not claim a queue place the store refused', async () => {
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+    const req = requester(false);
+
+    const report = await serviceWith([sell], req).trace(VICTIM);
+
+    expect(req.seen).toEqual([VICTIM]);
+    expect(report.coverage.deepReadRequested).toBe(false);
+    expect(report.notes.join(' ')).not.toContain('queued for a full read');
+  });
+
+  it('leaves the report alone when no requester is wired in', async () => {
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+
+    const report = await service([sell], [sell]).trace(VICTIM);
+
+    expect(report.coverage.deepReadRequested).toBe(false);
   });
 });

@@ -7,8 +7,32 @@ import {
   loadEnvFile,
   nowSeconds,
 } from '@exitliquidity/core';
+import { statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createHttpServer } from './http.js';
 import { createServices, worstCaseTraceSeconds } from './services.js';
+
+/**
+ * Which file is actually running, and when it was written.
+ *
+ * The one question a deployment cannot otherwise answer about itself.
+ * `pm2 restart` succeeds whether or not the build under it changed, a process
+ * manager can be pointed at an entry point nobody expects, and a stale API
+ * serving a current console produces exactly the symptoms of a broken engine —
+ * which cost a day to tell apart by hand. `import.meta.url` is the module that
+ * was really loaded, so this is a measurement rather than a claim about what
+ * should have been deployed.
+ */
+function buildIdentity(): { module: string; builtAt: string | null } {
+  const module = fileURLToPath(import.meta.url);
+  try {
+    return { module, builtAt: new Date(statSync(module).mtimeMs).toISOString() };
+  } catch {
+    // Bundled, virtualised, or read-only in a way that hides the file. Null
+    // rather than a guess: unknown and stale are different answers.
+    return { module, builtAt: null };
+  }
+}
 
 /** Same codes the ingest CLI uses, so a process manager can treat them alike. */
 const EXIT_FAILURE = 1;
@@ -28,7 +52,10 @@ async function main(): Promise<number> {
   const services = createServices(config);
   const { logger } = services;
 
+  const build = buildIdentity();
+
   const server = createHttpServer({
+    build,
     traces: services.traces,
     cache: services.cache,
     semaphore: services.semaphore,
@@ -52,6 +79,8 @@ async function main(): Promise<number> {
       lookbackDays: config.TRACE_LOOKBACK_DAYS,
       index: services.indexed ? 'on' : 'off',
       cors: services.corsOrigins.length === 0 ? 'none' : services.corsOrigins.join(','),
+      module: build.module,
+      builtAt: build.builtAt,
     },
     'trace API listening',
   );
