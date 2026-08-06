@@ -150,8 +150,13 @@ describe('SolanaRpcClient batch sizing', () => {
    * correct and every attempt still came back `429 Too Many Requests` — the
    * burst lands in a single millisecond, and no amount of waiting afterwards
    * makes it narrower. It read as a dead API key.
+   *
+   * Clamping to the whole allowance was not enough. That still puts an entire
+   * second's budget on the wire at one instant, and the same endpoint refused
+   * every attempt at exactly that setting while answering a single call
+   * instantly — the key was fine, the burst was not.
    */
-  it('never lets one batch exceed the per-second allowance', () => {
+  it('keeps one batch to half the per-second allowance', () => {
     const client = new SolanaRpcClient({
       url: 'https://rpc.invalid',
       maxRequestsPerSecond: 10,
@@ -159,7 +164,7 @@ describe('SolanaRpcClient batch sizing', () => {
       logger: silentLogger,
     });
 
-    expect(client.transactionBatchSize).toBe(10);
+    expect(client.transactionBatchSize).toBe(5);
   });
 
   it('leaves a batch that already fits alone', () => {
@@ -395,13 +400,13 @@ describe('SolanaRpcClient batching', () => {
 
   it('keeps the rate limiter in charge of the rate, not the concurrency', async () => {
     // Three in flight must not mean three slots at once. Six signatures in
-    // batches of two, at two calls a second, is three batches charged one
-    // second each: slots at 0s, 1s and 2s however far they overlap.
-    const { client } = batchClient((r) => batchOk(r), 2, 2);
+    // batches of two, at four calls a second, is three batches charged half a
+    // second each: slots at 0s, 0.5s and 1s however far they overlap.
+    const { client } = batchClient((r) => batchOk(r), 2, 4);
 
     const started = Date.now();
     await client.getTransactions(['a', 'b', 'c', 'd', 'e', 'f']);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(1900);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
   });
 
   it('falls back to one request per signature when batching is off', async () => {

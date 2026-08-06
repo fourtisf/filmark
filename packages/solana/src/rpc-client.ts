@@ -166,17 +166,22 @@ export class SolanaRpcClient {
     this.#logger = options.logger ?? silentLogger;
     this.#fetch = options.fetchImpl ?? globalThis.fetch;
 
-    // A batch larger than the per-second allowance is a burst the limiter
-    // cannot smooth. It charges the batch its full cost, so the *average* rate
-    // is right — but all twenty calls still land in the same millisecond, and a
-    // provider metering a one-second window rejects them on arrival however
-    // long the client then waits. The result is a 429 on every attempt, which
-    // reads as a broken key rather than as a batch that was too wide.
-    this.#batchSize = Math.min(requested, Math.max(1, Math.floor(rps)));
+    /*
+     * A batch is a burst the limiter cannot smooth: it charges the full cost so
+     * the *average* rate is right, but every call in it still lands in the same
+     * millisecond. Clamping to the whole per-second allowance was not enough —
+     * it puts an entire second's budget on the wire at one instant, and a
+     * provider measuring a sliding window is still counting those when the next
+     * batch arrives. A live endpoint refused every attempt at exactly that
+     * setting, which reads as a dead key rather than as a batch too wide by
+     * half. Half the allowance costs one extra round trip and leaves the meter
+     * somewhere to breathe.
+     */
+    this.#batchSize = Math.min(requested, Math.max(1, Math.floor(rps / 2)));
     if (this.#batchSize < requested) {
       this.#logger.warn(
         { requested, applied: this.#batchSize, maxRequestsPerSecond: rps },
-        'batch size reduced to the per-second limit; a wider batch would burst past it',
+        'batch size reduced to half the per-second limit; a wider batch puts the whole allowance on the wire at once',
       );
     }
   }
