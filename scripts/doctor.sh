@@ -20,8 +20,13 @@ WORKER="${FILLMARK_PM2_WORKER:-fillmark-worker}"
 WALLET="${1:-}"
 
 FAILED=0
+PROBLEMS=()
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
-bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; FAILED=1; }
+# Recorded as well as printed. A long report scrolls, and the one line that
+# mattered ends up above the window while the verdict at the bottom says only
+# that something was wrong — which is how the most important fact in this
+# script came to be the least visible one.
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; PROBLEMS+=("$1"); FAILED=1; }
 note() { printf '    %s\n' "$1"; }
 head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
@@ -164,10 +169,39 @@ else
   fi
 fi
 
+# ── what the API itself said ──────────────────────────────────────────────
+head_ "What the API reported"
+# The startup line and the queue attempt. Between them they separate "the index
+# is switched off" from "the API tried to queue and was refused", which look
+# identical from every other angle: an empty queue.
+LOG="$(pm2 logs "$APP" --lines 400 --nostream 2>/dev/null)"
+if [ -z "$LOG" ]; then
+  note "no log available — pm2 logs $APP --lines 200 --nostream"
+else
+  if grep -q '"index":"on"' <<<"$LOG"; then
+    ok 'the API booted with the index ON'
+  elif grep -q '"index":"off"' <<<"$LOG"; then
+    bad 'the API booted with the index OFF — it will never queue anything'
+    note "set API_USE_INDEX=true in $REPO/.env, then: pm2 restart $APP --update-env"
+  else
+    note 'no startup line in the last 400 lines — restart the API to see it'
+  fi
+
+  if grep -q 'could not queue a deep read' <<<"$LOG"; then
+    bad 'the API tried to queue a wallet and the store refused it'
+    grep 'could not queue a deep read' <<<"$LOG" | tail -2 | sed 's/^/    /'
+  elif grep -q 'queued a deep read' <<<"$LOG"; then
+    ok 'the API has queued at least one wallet'
+  else
+    note 'the API has not tried to queue anything in the last 400 lines'
+  fi
+fi
+
 head_ "Verdict"
 if [ "$FAILED" -eq 0 ]; then
   printf '  \033[32mEverything above is wired up.\033[0m\n'
 else
-  printf '  \033[31mSomething above is not right — the failing lines say which.\033[0m\n'
+  printf '  \033[31m%d thing(s) are not right:\033[0m\n' "${#PROBLEMS[@]}"
+  for problem in "${PROBLEMS[@]}"; do printf '    • %s\n' "$problem"; done
 fi
 exit "$FAILED"
