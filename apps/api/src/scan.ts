@@ -114,6 +114,16 @@ export interface WalletScan {
   readonly foreignSwaps: number;
   /** Venue instructions refused by a parser, by venue and reason. */
   readonly parseSkips: Readonly<Record<string, number>>;
+  /**
+   * Days of history this scan set out to cover.
+   *
+   * Carried on the scan rather than read off the trace's own limits, because
+   * the two answer paths do not cover the same window. A crawl covers what the
+   * request could afford; the index covers whatever a backfill already paid
+   * for, which is usually more. Reporting the request's setting for both would
+   * describe a 365-day answer as a 90-day one.
+   */
+  readonly windowDays: number;
   /** Unix seconds of the oldest signature the crawl reached. */
   readonly oldestTs: number | null;
   readonly newestTs: number | null;
@@ -249,6 +259,7 @@ export class ChainScanner {
       // through something else — a bot or a router whose own account signs.
       foreignSwaps: read.parsed.length - mine.length,
       parseSkips,
+      windowDays: this.#budget.lookbackDays,
       oldestTs: times.length > 0 ? Math.min(...times) : null,
       newestTs: times.length > 0 ? Math.max(...times) : null,
       // Either ceiling leaves history behind, so both mean the same thing to a

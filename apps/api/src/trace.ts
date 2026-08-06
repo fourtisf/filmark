@@ -154,7 +154,7 @@ export class TraceService {
 
     if (source === 'index') {
       notes.push(
-        `Answered from the swap index rather than by crawling the chain, so this trace spent no RPC and covers the whole ${this.#limits.lookbackDays}-day window rather than as much of it as a request had time for.`,
+        `Answered from the swap index rather than by crawling the chain, so this trace spent no RPC and covers the whole ${scan.windowDays}-day window a backfill already paid for, rather than as much of it as a request had time for.`,
       );
     }
 
@@ -207,7 +207,7 @@ export class TraceService {
       notes.push(
         `${sells} ${plural(sells, 'sell was', 'sells were')} read for this wallet and no buys at all, which cannot be what happened — a wallet cannot sell what it never bought. No profit or loss is reported rather than one invented from a basis that was never read.`,
         ...missingBuyLegCauses(scan, {
-          lookbackDays: this.#limits.lookbackDays,
+          lookbackDays: scan.windowDays,
           maxSignatures: this.#scanner.budget.maxSignatures,
           elapsedMs: Date.now() - startedAt,
           walletTimeBudgetMs:
@@ -448,7 +448,9 @@ export class TraceService {
   ): TraceCoverage {
     return {
       source,
-      lookbackDays: this.#limits.lookbackDays,
+      // The scan's own window, not the configured one. An index answer covers
+      // whatever a backfill paid for, which is usually wider than a request.
+      lookbackDays: scan.windowDays,
       venues: PARSED_VENUES,
       fromTs: scan.oldestTs,
       toTs: scan.newestTs,

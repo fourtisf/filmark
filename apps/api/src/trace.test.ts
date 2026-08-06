@@ -100,6 +100,8 @@ function scannerFor(
         unpricedSwaps: 0,
         foreignSwaps: 0,
         parseSkips: {},
+        // What the real scanner reports: the window it was budgeted for.
+        windowDays: BUDGET.lookbackDays,
         oldestTs: BASE_TS,
         newestTs: BASE_TS + 3600,
         truncated: false,

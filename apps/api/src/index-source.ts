@@ -80,13 +80,29 @@ export class ClickHouseWalletSource implements IndexedWalletSource {
     const staleness = daysToSeconds(1);
     if (covered.fromTs > fromTs || covered.toTs < toTs - staleness) return null;
 
-    const swaps = await this.#swaps.walletSwaps(wallet, fromTs, toTs);
+    /*
+     * Read everything the index has, not just the window the crawl was sized for.
+     *
+     * `lookbackDays` is a budget: it exists because a live crawl pays one
+     * `getTransaction` per signature and has a request to fit inside. Reading
+     * further back out of ClickHouse costs the same single query, so applying
+     * that budget here throws away history somebody already paid a backfill for
+     * — and throws it away at exactly the wrong end. A wallet that bought
+     * before the window and sold inside it comes back as sells with no buys,
+     * which the trace correctly refuses to answer; the index was holding the
+     * buys the whole time and was asked not to look.
+     */
+    const readFrom = Math.min(fromTs, covered.fromTs);
+    const swaps = await this.#swaps.walletSwaps(wallet, readFrom, toTs);
 
     return {
       wallet,
       swaps,
       census: censusOf(swaps),
       unpricedSwaps: swaps.filter((swap) => swap.usdValue === null).length,
+      // What was actually covered, which is what the report must say — not the
+      // narrower number the caller asked for.
+      windowDays: Math.max(1, Math.round((toTs - readFrom) / daysToSeconds(1))),
       // The index stores what the wallet itself executed; a swap by another
       // address was never written under this wallet, so there is nothing to
       // count here and reporting a zero would be a measurement, not a guess.
