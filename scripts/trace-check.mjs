@@ -129,7 +129,13 @@ if (!response.ok || body === null) {
 }
 
 const { coverage: c, totals: t } = body;
-const usd = (n) => (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
+/* Null is not zero. A trace that stopped before attribution reports null for
+   every figure attribution would have produced, and printing "$0" there is the
+   constant-as-measurement fault this script exists to catch elsewhere. */
+const usd = (n) =>
+  n === null || n === undefined
+    ? '— (attribution never ran)'
+    : (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
 const row = (label, value) => stdout.write(`  ${label.padEnd(22)}${value}\n`);
 
 /*
@@ -215,6 +221,19 @@ row(
     ? `yes — ${(c.transactionsUnread ?? 0).toLocaleString('en-US')} transactions unread`
     : 'no',
 );
+/* Whether anything is being done about a read that fell short.
+   Its absence is what made a deploy ambiguous: the engine had queued the wallet
+   and this script had no way to say so, which reads exactly like it had not. */
+row(
+  'deep read',
+  c.deepReadRequested === true
+    ? 'queued — the worker is reading this wallet in full; trace again in a few minutes'
+    : c.source === 'index'
+      ? 'not needed — answered from the index'
+      : c.deepReadRequested === undefined
+        ? 'unknown (older API — redeploy)'
+        : 'not queued',
+);
 row('positions closed', t.positionsClosed);
 row('excluded', Object.keys(c.excluded ?? {}).length === 0 ? 'none' : JSON.stringify(c.excluded));
 row('realised PnL', usd(t.realisedPnlUsd));
@@ -255,7 +274,23 @@ const VERDICTS = {
     );
   },
   unreadable_history: () => {
+    /*
+     * When the engine has already queued the wallet, that is the answer.
+     *
+     * The advice below is real but it is operator advice — raise a setting,
+     * restart, try again. A queued deep read needs none of it and supersedes
+     * all of it, so leading with a config change there sends somebody to edit
+     * .env for a problem that is already being solved.
+     */
+    const queued =
+      c.deepReadRequested === true
+        ? `This wallet is already queued for a full read, which is not bound by the settings\n` +
+          `below. Wait for the worker (pm2 logs fillmark-worker) and run this again — the\n` +
+          `source should then read "swap index". Everything below is why the live path could\n` +
+          `not answer, for reference rather than for action.\n\n`
+        : '';
     const head =
+      queued +
       `${sells} sells and ${buys} buys. A wallet cannot sell what it never bought, so the read\n` +
       `lost the entry legs. In order of likelihood, given what this trace measured:\n`;
     const causes = [];
