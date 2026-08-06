@@ -51,13 +51,25 @@ pm2 restart "$APP" --update-env >/dev/null
 sleep 5
 curl -fsS -o /dev/null "http://127.0.0.1:8080/healthz" || fail "the API is not answering on :8080"
 
+INDEXED=""
 if [ -n "$WALLET" ]; then
-  step "Indexing $WALLET"
+  step "Indexing $WALLET (${FILLMARK_INDEX_DAYS:-365} days — the long step; Ctrl+C is safe)"
   # Migrations are idempotent, and the backfill has no request timeout behind
   # it — which is the whole reason a wallet too deep for a live trace fits here.
-  pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts migrate >/dev/null
-  pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts \
-    backfill "$WALLET" --days "${FILLMARK_INDEX_DAYS:-365}"
+  #
+  # Deliberately not fatal. It is the only step here measured in minutes, so it
+  # is the only one anybody interrupts — and losing the verification below to a
+  # Ctrl+C on an optional step leaves the operator unsure whether the deploy
+  # that already finished actually worked. It writes as it goes and re-running
+  # resumes, so a partial index costs nothing but time.
+  if pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts migrate >/dev/null &&
+    pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts \
+      backfill "$WALLET" --days "${FILLMARK_INDEX_DAYS:-365}"; then
+    INDEXED=yes
+  else
+    printf '\n\033[33m   indexing stopped early — the deploy above still stands.\033[0m\n'
+    printf '   Re-run it whenever; it resumes rather than starting over.\n'
+  fi
 fi
 
 step "Verifying what is actually live"
@@ -68,7 +80,7 @@ grep -q 'unpriced_history' <<<"$PAGE" || fail "the site is still serving an olde
 grep -q "content=\"$API_URL\"" <<<"$PAGE" || fail "the live console points somewhere other than $API_URL"
 printf '   console    current, pointed at %s\n' "$API_URL"
 
-if [ -n "$WALLET" ]; then
+if [ -n "$INDEXED" ]; then
   node scripts/trace-check.mjs "$WALLET"
 fi
 
