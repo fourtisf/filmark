@@ -4,11 +4,17 @@ Five posts, one image each, written against the frames in `x-post-1..5.png`
 (`node scripts/build-x-posts.mjs`).
 
 Two rules shaped every line below, and they are the same two the product runs
-on. **§7.1** — nothing claims proof, identity or recovery; attribution measures
-overlap and the copy says so before anybody has to ask. **§7.4** — there is not
-one figure in the thread. A launch post is exactly where an invented
-"$2.1M traced" belongs, and a product whose whole pitch is that it refuses to
-state what it did not measure cannot open by doing that.
+on.
+
+**§7.1** — nothing claims proof, identity or recovery; attribution measures
+overlap and the copy says so before anybody has to ask.
+
+**§7.4** — no figure anywhere is presented as a measurement of a real address.
+That is what the rule is actually about, and it leaves room for the thing every
+product does: one frame shows a mocked coverage block, labelled illustrative on
+the frame, so a reader can see the shape of a full answer. What stays out is a
+headline number with nothing behind it — "$2.1M traced" is the post this thread
+does not have.
 
 Post 4 is load-bearing. Leading with a list of "who took your money" and
 burying the caveat is the version of this that gets called a scam by somebody
@@ -57,12 +63,16 @@ Pump.fun and PumpSwap today. Both venues, one position.
 ```
 Every answer carries what it could not read.
 
-Loss that no window explained is reported as unattributed — separately,
-never folded into the headline. Swaps it could not price are counted.
-The window it actually reached is printed, not the one it asked for.
+$8,140 attributed. $2,306 that no window explained — reported beside the
+headline, not inside it. Both add up to the loss the wallet actually
+realised, which is the point: nothing is padded to make the number bigger.
 
-A dash means nothing was measured. You get a dash, not a zero.
+The window it reached is printed too, not the one it asked for.
 ```
+
+The figures on that frame are illustrative and the frame says so. They are also
+internally consistent — 8,140 + 2,306 = 10,446 — because the first person to add
+them up is the person worth convincing.
 
 ---
 
@@ -108,9 +118,10 @@ fillmark.xyz/app
 - **Alt text** is not optional on a thread whose whole argument is legibility.
   Suggested, in order: "Fillmark wordmark over the line: your losses didn't
   evaporate, they moved" / "A buy leg with a time window either side of it, and
-  the sells that overlapped it" / "A coverage table with dashes where no figure
-  was measured" / "The line: attribution measures overlap, not payment" / "A
-  wallet address field with a Trace wallet button".
+  the sells that overlapped it" / "A coverage table: $8,140 attributed, $2,306
+  unattributed, against a realised loss of $10,446" / "The line: attribution
+  measures overlap, not payment" / "A wallet address field with a Trace wallet
+  button".
 - **The banners are 1600×900.** X crops to 16:9 in the timeline, so nothing here
   is lost; the contact sheet in `x-post-preview.png` shows each frame at the
   ~380px a phone renders, which is the size to judge them at.

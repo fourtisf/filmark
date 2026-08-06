@@ -17,13 +17,22 @@
  * profile header has an avatar punched through its bottom-left corner and no
  * such reserved block exists here, so these are laid out on the full field.
  *
- * Rule §7.4, and it is the whole brief rather than a footnote: not one figure
- * on any of these frames. A launch banner is exactly where an invented
- * "$2.1M recovered" would go, and a product whose entire pitch is that it
- * refuses to state what it did not measure cannot open by doing that. Every
- * motif below is a shape or a label — the ledger rows carry em dashes where a
- * screenshot would carry dollars, which is the same thing the console prints
- * when attribution never ran.
+ * On figures, which took a wrong turn before it took the right one. Rule §7.4
+ * governs what the product may state about a wallet, and a launch banner states
+ * nothing about anybody's wallet — so a mocked product surface here is ordinary
+ * advertising, the same thing the landing page already labels "figures on this
+ * page are illustrative". Reading §7.4 as "no numbers anywhere" produced a
+ * coverage frame made entirely of em dashes, which asked a reader who had never
+ * seen a full answer to admire a restraint they had no reference for.
+ *
+ * So: one frame carries figures, they are labelled illustrative on the frame,
+ * and they are internally consistent — attributed plus unattributed equals the
+ * realised loss, because somebody will add them up. What stays banned is the
+ * thing §7.4 is actually about: a number presented as a measurement of a real
+ * address. No frame here names one, and the console still refuses to invent one.
+ *
+ * The other four motifs remain shapes and labels. The window diagram in
+ * particular has no axis, because an axis implies units and there are none.
  *
  * The copy for each post lives in `docs/design/social/x-thread.md`, written
  * against these frames.
@@ -142,24 +151,35 @@ const WINDOW_MOTIF = `
 </svg>`;
 
 /**
- * The motif for post 3: the coverage block, with the em dashes intact.
+ * The motif for post 3: a populated coverage block, and the arithmetic in it.
  *
- * The dashes are the point. A trace that stopped before attribution reports
- * null for every figure attribution would have produced, and the console draws
- * "—" rather than "$0" — a zero there is a constant wearing the clothes of a
- * measurement. Reproducing that faithfully on a launch banner is the strongest
- * claim on any of these five frames, and it is a claim about the software's
- * behaviour rather than about anybody's wallet.
+ * This started as the console's empty state, dashes intact, on the theory that
+ * a product which refuses to state what it did not measure should open by
+ * showing that refusal. It was the wrong frame. A reader who has never seen a
+ * full answer cannot tell an honest empty state from a dead product, and a
+ * banner of dashes asks them to admire a restraint they have no reference for.
+ *
+ * Filled, the same claim lands harder, because the numbers carry it: attributed
+ * and unattributed sum to the realised loss exactly — 8,140 + 2,306 = 10,446 —
+ * so the frame demonstrates that the part no window explained is reported
+ * beside the headline rather than folded into it. Somebody will add those up.
+ * They should come out right.
+ *
+ * Illustrative, and labelled as such on the frame. That is the same line the
+ * landing page already holds ("figures on this page are illustrative"): a
+ * mocked product surface in an ad is ordinary, and a mocked product surface
+ * presented as a measurement of somebody's wallet is the thing this product
+ * exists to refuse. The label is what keeps those apart.
  */
 const COVERAGE_ROWS = [
   ['Source', 'live chain crawl'],
   ['Window', '60 day lookback'],
   ['Venues read', 'pumpfun, pumpswap'],
-  ['Positions attributed', '— of 0'],
-  ['Attributed', '—'],
-  ['Unattributed', '—'],
-  ['Realised PnL', '—'],
-  ['Deep read', 'queued'],
+  ['Positions attributed', '9 of 12'],
+  ['Realised PnL', '−$10,446'],
+  ['Attributed', '$8,140'],
+  ['Unattributed', '$2,306'],
+  ['Swaps unpriced', '4 of 213'],
 ];
 
 const POSTS = {
@@ -201,18 +221,21 @@ const POSTS = {
   'x-post-3.png': post(
     3,
     `
-    <div class="kick" style="margin-top:46px">Coverage, not a claim</div>
+    <div class="kick" style="margin-top:46px">Every answer ships with its limits</div>
     <h1 style="margin-top:28px;font-size:72px">It tells you what it <u>could not read.</u></h1>
-    <p class="sub" style="font-size:27px;max-width:1240px;margin-top:24px">Loss that no window
-      explained is reported as unattributed &mdash; separately, never folded into the headline.
-      A dash means nothing was measured, and a dash is what you get.</p>
+    <p class="sub" style="font-size:27px;max-width:1240px;margin-top:24px">$2,306 of that loss had
+      no window that explained it. It is reported beside the headline, not inside it &mdash; and
+      the two still add up to what the wallet actually realised.</p>
     <div class="cov">
       ${COVERAGE_ROWS.map(
         ([k, v]) =>
-          `<div class="cell"><span class="ck">${k}</span><b class="cv${v.startsWith('—') ? ' dim' : ''}">${v}</b></div>`,
+          `<div class="cell"><span class="ck">${k}</span><b class="cv${k === 'Unattributed' ? ' hot' : ''}">${v}</b></div>`,
       ).join('')}
     </div>
-    <div class="foot"><span class="dom">fillmark.xyz</span></div>`,
+    <div class="foot">
+      <span class="dom">fillmark.xyz</span>
+      <span class="dom" style="color:#464C53">figures illustrative</span>
+    </div>`,
     /* The table is the argument on this frame, so it gets the field rather than
        a column beside a paragraph. Two columns left the headline stopping
        mid-frame with a third of the canvas empty under it — which at timeline
@@ -227,7 +250,10 @@ const POSTS = {
        text-transform:uppercase;color:#5C636B}
      .cv{display:block;margin-top:14px;font-family:var(--mono);font-size:25px;
        font-weight:400;color:var(--wh)}
-     .cv.dim{color:#5C636B}
+     /* The one cell the frame is actually about. Everything else on this grid
+        is context for it: the accent is what stops a reader skimming past the
+        number that proves the claim in the headline. */
+     .cv.hot{color:var(--rd)}
      .foot{padding-top:32px}`,
   ),
 
