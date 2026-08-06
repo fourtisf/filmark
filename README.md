@@ -108,6 +108,12 @@ like a slow RPC endpoint. The warm-up now stops at the crawl's own deadline and
 sets this flag — the fill carries on in the background, so the answer is to
 trace again in a minute rather than to change a setting.
 
+Better than tracing again: the API fills `TRACE_LOOKBACK_DAYS` of bars in the
+background as soon as it is listening, and tops up the newest end every
+`PRICE_REFRESH_SEC`. Steady state is then a trace that never asks Benchmarks
+anything. The window this flag can appear in is the first minutes after a
+restart, which is when the series is being paid for.
+
 **And `coverage.stoppedOnTimeBudget`.** A trace is bounded twice: in RPC calls by
 the `TRACE_*` ceilings, and in wall clock by `API_TRACE_TIMEOUT_MS`. The clock is
 the one that moves when a provider throttles. When it is what ended the crawl the

@@ -124,6 +124,16 @@ const COOLDOWN_BASE_MS = 250;
 /** A rejected credential is not a busy moment; wait properly before retrying. */
 const REJECTED_COOLDOWN_MS = 300_000;
 
+/**
+ * Longest a `Retry-After` may hold an endpoint's limiter back.
+ *
+ * Bounded so a provider — or a misconfigured gateway in front of one — cannot
+ * park a trace for the rest of its clock with one header. Past this the retry
+ * backoff and the endpoint cooldown are what carry the wait, and a trace that
+ * runs out of time reports that rather than hanging.
+ */
+const MAX_RETRY_AFTER_PAUSE_MS = 30_000;
+
 export class SolanaRpcClient {
   readonly #endpoints: readonly Endpoint[];
   readonly #maxAttempts: number;
@@ -553,16 +563,36 @@ export class SolanaRpcClient {
             if (response.status === 429) {
               endpoint.limiter.backOff();
               this.#cool(endpoint, COOLDOWN_BASE_MS);
+              /*
+               * And do what it actually asked for, which is not the same thing.
+               *
+               * `backOff` changes the rate. An endpoint answering `Retry-After:
+               * 1` is not asking to be asked more slowly for ever — it is
+               * asking to be left alone until its window rolls, and every call
+               * already queued behind this one walks straight back into the
+               * same wall while the rate halves around it. That is the shape a
+               * live Helius key produced: rate stepped 10 → 5 → 3, one batch in
+               * flight, and a `429 Too Many Requests` at every step down. The
+               * Pyth client has honoured this header for as long as it has been
+               * metered over a window; this one only ever read it into an error
+               * message.
+               */
+              const wait = Math.min(
+                MAX_RETRY_AFTER_PAUSE_MS,
+                Number(response.headers.get('retry-after') ?? 0) * 1000,
+              );
+              endpoint.limiter.pause(wait);
               this.#logger.warn(
                 {
                   method,
                   attempt,
                   endpoint: sanitiseUrl(endpoint.url),
                   rate: Number(endpoint.limiter.effectiveRate.toFixed(2)),
+                  pausedMs: wait,
                   batchesInFlight: this.#concurrency(),
                   endpoints: this.#endpoints.length,
                 },
-                'rate limited; slowing this endpoint down, going serial, and preferring the others. If it keeps happening all the way down, it is not a per-second limit — check the plan for a credit or connection quota',
+                'rate limited; pausing for as long as it asked, slowing this endpoint down, going serial, and preferring the others. If it keeps happening all the way down, it is not a per-second limit — check the plan for a credit or connection quota',
               );
             }
             // A refused credential is not a busy moment. Set the endpoint aside

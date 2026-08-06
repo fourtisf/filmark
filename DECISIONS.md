@@ -237,6 +237,22 @@ the same shape as the rule above: needed-and-not-queued is a fact about the
 service, and collapsing it into "not needed" is a constant standing in for a
 measurement nobody took.
 
+### A `Retry-After` applies to the endpoint, not to the call that got it
+
+`retry` honoured the header for the request that was refused, and nothing
+honoured it for the requests queued behind that one — those were merely spaced
+a little further apart by `backOff` and walked back into the same wall. A live
+Helius key showed exactly that: rate stepping 10 → 5 → 3, one batch in flight,
+`Retry-After: 1`, and `429 Too Many Requests` at every step down. Changing the
+rate is the answer to a per-second ceiling; a quota measured over a window wants
+the whole endpoint left alone until it rolls.
+
+`SolanaRpcClient` now calls `limiter.pause()` with the header's value, bounded
+at 30 seconds so one header cannot park a trace. The Pyth client has done this
+for as long as it has been metered over a window; this is the same bargain, and
+the RPC client had been reading the header into an error message and nowhere
+else.
+
 ### The price warm-up is bounded by the trace's clock
 
 Every wait inside a trace is budgeted and reported — except one. The SOL/USD
@@ -254,6 +270,14 @@ prices from the minutes already held and counts the rest in `swapsUnpriced`,
 which the report already knows how to explain. The alternative was a request
 that spends its clock on an upstream it has no budget for and then blames the
 one it does.
+
+The bound is the floor, not the fix. The API had been warming one hour of bars
+at startup — enough to prove the feed is reachable and to price almost nothing —
+so the first trace after every restart still fetched the whole lookback itself,
+inside a request. It now fills `TRACE_LOOKBACK_DAYS` in the background once the
+server is listening and tops up the newest end every `PRICE_REFRESH_SEC`. The
+requests are identical; only who waits for them changes, which is the same
+argument the index makes about the chain.
 
 ### The parser's error boundary sits per instruction, not per transaction
 

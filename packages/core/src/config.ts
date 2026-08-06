@@ -73,6 +73,22 @@ const configSchema = z.object({
    * price it. Beyond this the row keeps `usd_value = NULL`; spec §7.4.
    */
   PRICE_MAX_STALENESS_SEC: positiveInt.default(300),
+  /**
+   * Seconds between top-ups of the API's SOL/USD series. 0 turns it off.
+   *
+   * The series a trace needs is the same fortnight for everybody who lost money
+   * in the same cycle, so fetching it per request re-downloads what the process
+   * already holds — and does it inside a request, against an endpoint that
+   * meters over a window and answers `Retry-After: 58`. Observed on the live
+   * service: a trace paused sixty seconds inside Benchmarks after the chain had
+   * already answered it.
+   *
+   * Filling the whole lookback once at startup and topping up the newest end on
+   * this interval moves that cost to where nobody is waiting. The top-up is one
+   * window — `#gaps` only asks for what is missing — so this is cheap at any
+   * value well under the series' own staleness bound.
+   */
+  PRICE_REFRESH_SEC: nonNegativeInt.default(120),
 
   BACKFILL_CONCURRENCY: positiveInt.default(4),
   /** Default lookback when a backfill job names no explicit range. Spec §8. */

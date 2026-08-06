@@ -462,6 +462,53 @@ describe('SolanaRpcClient error reporting', () => {
     expect(calls()).toBe(3);
   });
 
+  it('holds back the calls queued behind a 429, not just the one that got it', async () => {
+    /*
+     * What a live Helius key produced: rate stepped 10 → 5 → 3, one batch in
+     * flight, `Retry-After: 1`, and `429 Too Many Requests` at every step down.
+     *
+     * `retry` already honoured the header for the call that was refused. What
+     * nothing honoured it for was every *other* call on that endpoint: those
+     * were merely spaced a little further apart and walked straight back into
+     * the same wall, which is what a quota measured over a window does to a
+     * client that only knows how to change its rate. The header is the endpoint
+     * saying how long to leave it alone, and that applies to the whole
+     * endpoint.
+     */
+    let refuse: (() => void) | undefined;
+    const refused = new Promise<void>((resolve) => {
+      refuse = resolve;
+    });
+    let seen = 0;
+
+    const client = new SolanaRpcClient({
+      url: 'https://rpc.invalid',
+      // High enough that the limiter's own spacing cannot account for the gap.
+      maxRequestsPerSecond: 1000,
+      maxAttempts: 3,
+      logger: silentLogger,
+      fetchImpl: async (): Promise<Response> => {
+        seen += 1;
+        if (seen === 1) {
+          setTimeout(() => refuse?.(), 0);
+          return new Response('slow down', { status: 429, headers: { 'retry-after': '1' } });
+        }
+        return ok(1);
+      },
+    });
+
+    const first = client.getSlot();
+    await refused;
+
+    // A second, unrelated call, issued once the endpoint has already said it
+    // wants a second. Without the pause the 250ms cooldown is all that holds it.
+    const queuedAt = Date.now();
+    await client.getBlockTime(5);
+    expect(Date.now() - queuedAt).toBeGreaterThanOrEqual(700);
+
+    await expect(first).resolves.toBe(1);
+  });
+
   it('treats -32603 as transient, because it is the server saying it failed', async () => {
     // JSON-RPC "Internal error" is the generic bucket providers empty overload
     // into. Classified permanent, it died on attempt zero — and

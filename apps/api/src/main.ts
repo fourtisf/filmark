@@ -136,7 +136,56 @@ async function main(): Promise<number> {
     } else {
       logger.info({ minutes: range.minutes }, 'SOL/USD feed answered');
     }
+
+    /*
+     * Then the rest of the window, where nobody is waiting for it.
+     *
+     * That one hour proves the feed is reachable and prices almost nothing: a
+     * trace covers `TRACE_LOOKBACK_DAYS`, so the first request after every
+     * restart paid for the whole series itself — inside a request, against an
+     * endpoint that meters over a window. The live service was observed pausing
+     * a full sixty seconds inside Benchmarks *after* the chain had finished
+     * answering it, and the coverage block had nothing to say about where the
+     * time went.
+     *
+     * The requests are the same either way; only who waits for them changes.
+     * Fired rather than awaited, because the server is already listening and a
+     * trace arriving mid-fill is answered from what is held and says so.
+     */
+    void warmPrices('startup');
   });
+
+  /** Fills the lookback the traces actually read, and keeps its newest end current. */
+  async function warmPrices(reason: 'startup' | 'refresh'): Promise<void> {
+    const from = nowSeconds() - config.TRACE_LOOKBACK_DAYS * 86_400;
+    try {
+      await services.prices.ensure(from, nowSeconds());
+      const range = services.prices.seriesRange;
+      // Debug on the refresh: it runs on a timer forever, and a line every two
+      // minutes saying nothing changed is how a log stops being read.
+      logger[reason === 'startup' ? 'info' : 'debug'](
+        { minutes: range?.minutes ?? 0, lookbackDays: config.TRACE_LOOKBACK_DAYS, reason },
+        'SOL/USD series warmed ahead of the traces that need it',
+      );
+    } catch (error) {
+      // Never fatal. An unpriced trace still reports what it read (§7.4), and
+      // `coverage.pricesCutShort` is what tells a reader this is the cause.
+      logger.warn({ reason, err: describeError(error) }, 'could not warm the SOL/USD series');
+    }
+  }
+
+  /*
+   * The newest minutes go stale on their own, and those are the ones every
+   * trace needs — a wallet's last sell was minutes ago. `#gaps` asks only for
+   * what is missing, so a top-up is one window rather than the whole window.
+   */
+  const refresh =
+    config.PRICE_REFRESH_SEC > 0
+      ? setInterval(() => {
+          void warmPrices('refresh');
+        }, config.PRICE_REFRESH_SEC * 1000)
+      : null;
+  refresh?.unref();
 
   await new Promise<void>((resolve) => {
     let closing = false;
@@ -144,6 +193,7 @@ async function main(): Promise<number> {
       if (closing) return;
       closing = true;
       logger.info({ signal }, 'shutting down');
+      if (refresh !== null) clearInterval(refresh);
       server.close(() => {
         resolve();
       });
