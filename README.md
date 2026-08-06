@@ -149,6 +149,44 @@ is a fabricated finding. A wallet with no coverage row, or whose coverage is
 narrower or staler than the request, falls through to the live crawl silently.
 `coverage.source` says which of the two answered, every time.
 
+The index reads the whole window it covers, not the window the crawl was sized
+for. `TRACE_LOOKBACK_DAYS` is a budget for the live path — one `getTransaction`
+per signature inside a request — and a ClickHouse read costs the same query at
+any depth. Applying that budget to the index threw away history a backfill had
+already paid for, at the older end, which is exactly where a wallet's entry legs
+are; a wallet indexed for 365 days and read back through a 90-day budget came out
+as sells with no buys.
+
+### The wallets nobody asked for by hand
+
+Running that command per wallet does not scale past the wallets the operator
+personally knows about, and everybody else gets the dead end. So the API asks
+for them itself:
+
+```bash
+API_USE_INDEX=true                                              # both halves
+pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts worker  # keep it running
+```
+
+A trace that was shaped by a budget rather than by the wallet — cut short by the
+clock, stopped at the signature ceiling, or landing between a wallet's buys and
+its sells — writes a row to `wallet_index_requests`. The worker drains that list
+one wallet at a time, because the RPC allowance is shared with the API serving
+live visitors, and the next trace of that wallet is answered from the index.
+`scripts/deploy.sh` starts the worker under PM2, so this is one setup step
+rather than one command per wallet.
+
+There is no claim, no lease and no status column. The outstanding work is the
+requests `wallet_coverage` does not yet satisfy — a join — so the worker can
+crash mid-job, restart, or run twice without corrupting anything. Two settings
+govern it: `INDEX_REQUEST_DAYS` (how much history to ask for; larger than
+`TRACE_LOOKBACK_DAYS` on purpose, since a backfill has no request to fit inside)
+and `INDEX_REQUEST_STALENESS_SEC` (when a covered wallet is worth re-reading).
+
+`coverage.deepReadRequested` is true only when the row was actually written, and
+the console tells the visitor to come back only then — a queue place nobody
+wrote down would be a claim the data does not support.
+
 ### More than one RPC endpoint
 
 `SOLANA_RPC_URL` takes a comma-separated list, and usually should. A rate limit

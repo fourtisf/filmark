@@ -190,13 +190,20 @@ export async function runBackfill(
   /*
    * Record what this run covered, so a reader can tell empty from unread.
    *
-   * Written after the flush, and only when the crawl reached the cutoff it was
+   * Written after the flush, and only when the crawl covered the window it was
    * asked for: a run cut short covers less than its window claims, and a
    * coverage row is a promise that the index can answer for this wallet over
    * this range. A wallet with zero swaps still gets a row — that is a real
    * answer, and the whole point is to stop it looking like an unread one.
+   *
+   * "Covered" includes running out of wallet before running out of window,
+   * which is the common case for anything younger than the lookback. Requiring
+   * a signature older than the cutoff meant those wallets recorded nothing at
+   * all, and — now that the API queues wallets itself — would have put one on
+   * the queue permanently, indexed on every pass and never satisfied by any of
+   * them.
    */
-  if (result.reachedCutoff) {
+  if (result.coveredWindow) {
     await services.walletCoverage.record({
       wallet: options.address,
       fromTs: fromSec,

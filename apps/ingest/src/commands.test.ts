@@ -18,7 +18,7 @@ function result(overrides: Partial<BackfillResult> = {}): BackfillResult {
     parseSkips: 0,
     oldestBlockTime: 1_781_537_052,
     newestBlockTime: 1_781_862_521,
-    reachedCutoff: true,
+    coveredWindow: true,
     ...overrides,
   };
 }
@@ -104,7 +104,7 @@ describe('runBackfill', () => {
   it('records nothing when the crawl did not reach its cutoff', async () => {
     // A run cut short covers less than its window claims, and the coverage row
     // is a promise about the window — not about the rows that happened to land.
-    const h = harness({ crawl: result({ reachedCutoff: false }) });
+    const h = harness({ crawl: result({ coveredWindow: false }) });
 
     await runBackfill(h.services, h.runner, { address: WALLET }, new AbortController().signal);
 

@@ -3,8 +3,8 @@
 # One command that takes this checkout to a working fillmark.xyz, and says
 # which step failed if one does.
 #
-#   scripts/deploy.sh                 # build, publish, restart, verify
-#   scripts/deploy.sh <WALLET>        # the same, then index that wallet
+#   scripts/deploy.sh                 # build, publish, migrate, restart, verify
+#   scripts/deploy.sh <WALLET>        # the same, then trace that wallet
 #
 # It exists because doing this by hand is nine commands across three systems —
 # the repo, nginx and PM2 — and every one of them has a way to look like it
@@ -20,6 +20,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WALLET="${1:-}"
 VHOST="${FILLMARK_VHOST:-/etc/nginx/sites-available/fillmark}"
 APP="${FILLMARK_PM2_APP:-fillmark-api}"
+WORKER="${FILLMARK_PM2_WORKER:-fillmark-worker}"
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 fail() { printf '\n\033[31mFAILED: %s\033[0m\n' "$1" >&2; exit 1; }
@@ -51,37 +52,57 @@ pm2 restart "$APP" --update-env >/dev/null
 sleep 5
 curl -fsS -o /dev/null "http://127.0.0.1:8080/healthz" || fail "the API is not answering on :8080"
 
-INDEXED=""
-if [ -n "$WALLET" ]; then
-  step "Indexing $WALLET (${FILLMARK_INDEX_DAYS:-365} days — the long step; Ctrl+C is safe)"
-  # Migrations are idempotent, and the backfill has no request timeout behind
-  # it — which is the whole reason a wallet too deep for a live trace fits here.
-  #
-  # Deliberately not fatal. It is the only step here measured in minutes, so it
-  # is the only one anybody interrupts — and losing the verification below to a
-  # Ctrl+C on an optional step leaves the operator unsure whether the deploy
-  # that already finished actually worked. It writes as it goes and re-running
-  # resumes, so a partial index costs nothing but time.
-  if pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts migrate >/dev/null &&
-    pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts \
-      backfill "$WALLET" --days "${FILLMARK_INDEX_DAYS:-365}"; then
-    INDEXED=yes
-  else
-    printf '\n\033[33m   indexing stopped early — the deploy above still stands.\033[0m\n'
-    printf '   Re-run it whenever; it resumes rather than starting over.\n'
-  fi
+step "Applying migrations"
+# Idempotent, and it has to happen before the API is told about a table that
+# does not exist yet.
+pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts migrate >/dev/null ||
+  fail "migrations did not apply — is ClickHouse up? (docker ps)"
+
+step "Starting the indexer"
+# The one process that makes this self-serving.
+#
+# The API cannot read an active wallet's year inside a web request — that is
+# arithmetic, not tuning — so it writes those wallets down instead, and this
+# reads them and pays for the history where nothing is waiting. Without it the
+# queue fills and nobody drains it, which looks exactly like the site ignoring
+# people. Started here rather than left as a note in a README, because a step
+# somebody has to remember is a step that gets skipped.
+if pm2 describe "$WORKER" >/dev/null 2>&1; then
+  pm2 restart "$WORKER" --update-env >/dev/null
+else
+  pm2 start pnpm --name "$WORKER" --cwd "$REPO" -- \
+    --filter @exitliquidity/ingest exec tsx src/cli.ts worker >/dev/null
 fi
+sleep 3
+pm2 describe "$WORKER" | grep -q 'status.*online' ||
+  fail "$WORKER is not staying up — pm2 logs $WORKER --lines 50"
+printf '   %s     online\n' "$WORKER"
 
 step "Verifying what is actually live"
-# The console's own contents, not its API url: the url was already right on the
-# build this replaces, so it proves nothing about which build is serving.
-PAGE="$(curl -fsS "https://$SERVER/app/")" || fail "https://$SERVER/app/ did not answer"
-grep -q 'unpriced_history' <<<"$PAGE" || fail "the site is still serving an older console build"
-grep -q "content=\"$API_URL\"" <<<"$PAGE" || fail "the live console points somewhere other than $API_URL"
-printf '   console    current, pointed at %s\n' "$API_URL"
+# The build id, not a feature string.
+#
+# The check this replaces grepped the live page for a string introduced by the
+# most recent console change — which passes for every build from that change
+# onwards, including the stale one it was there to catch. Twice a stale console
+# passed and was mistaken for a broken engine. The id is a hash of the page
+# source, so "same id" means "same bytes" and nothing else does.
+WANT="$(grep -o 'fillmark:build" content="[a-f0-9]*"' "$REPO/dist/app/index.html" |
+  head -1 | grep -o '[a-f0-9]\{6,\}')"
+[ -n "$WANT" ] || fail "the local build carries no build id — is scripts/build-site.mjs current?"
 
-if [ -n "$INDEXED" ]; then
-  node scripts/trace-check.mjs "$WALLET"
+PAGE="$(curl -fsS "https://$SERVER/app/")" || fail "https://$SERVER/app/ did not answer"
+GOT="$(grep -o 'fillmark:build" content="[a-f0-9]*"' <<<"$PAGE" | head -1 | grep -o '[a-f0-9]\{6,\}')"
+[ "$GOT" = "$WANT" ] ||
+  fail "the site is serving build ${GOT:-<none>}, not ${WANT} — the upload to $ROOT did not take"
+grep -q "content=\"$API_URL\"" <<<"$PAGE" || fail "the live console points somewhere other than $API_URL"
+printf '   console    %s, pointed at %s\n' "$WANT" "$API_URL"
+
+if [ -n "$WALLET" ]; then
+  step "Tracing $WALLET"
+  # The first trace of a wallet nobody has indexed is the slow one, and it is
+  # supposed to be: it is what puts the wallet on the queue this deploy just
+  # started draining. Run it again in a few minutes for the fast answer.
+  node scripts/trace-check.mjs "$WALLET" || true
 fi
 
 printf '\n\033[32mDone.\033[0m %s\n' \

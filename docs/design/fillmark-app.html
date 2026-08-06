@@ -29,6 +29,12 @@
      console, and every surface below says so rather than answering from demo
      data. `node scripts/build-site.mjs` fills it in from FILLMARK_API_URL. -->
 <meta name="fillmark:api" content="">
+<!-- Filled in at build time with a hash of this file's contents. A deploy can
+     then ask the live page which build it is serving, instead of grepping for
+     a feature string that was already present in the build it is replacing —
+     which is how a stale console twice passed verification and cost a day
+     being mistaken for a broken engine. -->
+<meta name="fillmark:build" content="">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -231,6 +237,12 @@ h1 em{font-style:normal;font-weight:300;color:var(--text3)}
 .cov-g div{padding:20px 18px;background:var(--void)}
 .cov-g b{display:block;font-family:var(--mono);font-size:13px;font-weight:400;margin-top:9px;
   word-break:break-word}
+/* The one line on a failed trace that is an instruction rather than a
+   diagnosis, so it does not read as another entry in the list of things that
+   went wrong. */
+.queued{border-left:2px solid var(--text2);padding:14px 0 14px 16px;font-weight:300;
+  font-size:14px;color:var(--text2)}
+.queued b{font-weight:500;color:var(--text)}
 .cov-n{list-style:none;margin-top:26px;border-top:1px solid var(--line)}
 .cov-n li{padding:16px 8px;border-bottom:1px solid var(--line);color:var(--text2);
   font-weight:300;font-size:14px;display:flex;gap:14px}
@@ -593,11 +605,15 @@ const FEED=[
 
 /* ── helpers ──────────────────────────── */
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const usd=n=>"$"+Math.round(Math.abs(n)).toLocaleString("en-US");
+/* Null is not zero, and the difference is the whole point. A trace that stopped
+   before attribution reports null for every figure attribution would have
+   produced; printing "$0" there would be a constant wearing the clothes of a
+   measurement, which is exactly what the engine stopped doing. */
+const usd=n=>n===null||n===undefined?"—":"$"+Math.round(Math.abs(n)).toLocaleString("en-US");
 /* The sign goes in front of the dollar sign, not between it and the digits.
    `$-7,200` reads as a typo; realised PnL is the one figure here that is
    routinely negative and routinely positive, so it needs both forms. */
-const signedUsd=n=>(Math.round(n)<0?"−":"")+usd(n);
+const signedUsd=n=>n===null||n===undefined?"—":(Math.round(n)<0?"−":"")+usd(n);
 let M=null, ACTIVE=null, PINNED=new Set([0,1,2]);
 
 /* ── the engine, if there is one ──────── */
@@ -995,8 +1011,9 @@ function renderReport(r){
   ACTIVE=r.wallet;
   const outcome=NO_RESULT[r.status];
   if(outcome){
-    setState(`No counterparties · <i>${esc(r.status.replace(/_/g," "))}</i>`);
-    nothing("No counterparties",outcome[0],outcome[1](r)+coverageHtml(r),r.wallet);
+    setState(`No counterparties · <i>${esc(r.status.replace(/_/g," "))}</i>`
+      +(r.coverage.deepReadRequested?" · <i>deep read queued</i>":""));
+    nothing("No counterparties",outcome[0],outcome[1](r)+queuedHtml(r)+coverageHtml(r),r.wallet);
     $("#cov-sec").hidden=true;
     return;
   }
@@ -1025,7 +1042,7 @@ function paint(m,note){
     : "Trace complete · <i>"+esc(note)+"</i>");
   PINNED=new Set(M.ranked.slice(0,3).map(p=>p.i));
 
-  if(m.report){$("#cov").innerHTML=coverageHtml(m.report);$("#cov-sec").hidden=false}
+  if(m.report){$("#cov").innerHTML=queuedHtml(m.report)+coverageHtml(m.report);$("#cov-sec").hidden=false}
   else $("#cov-sec").hidden=true;
   unlock();
 }
@@ -1033,6 +1050,23 @@ function paint(m,note){
 /* Spec §7.1 and §7.2. Every figure above is bounded by something — a lookback,
    a venue list, a budget that ran out — and the bounds belong on the page with
    the figure, not in a footnote somebody has to go and find. */
+/* What the reader can do about a trace that ran out of road.
+   The outcome copy above says what went wrong and why, honestly, and then
+   used to stop — leaving a dead end whose real cause was a budget rather than
+   the wallet. The engine now pays for those wallets out of band, where no
+   browser is waiting, so the useful sentence is "come back". Rendered only
+   when the request was actually recorded: the API reports that separately
+   from having wanted to, because a queue place nobody wrote down is a promise
+   this page has no business making. */
+function queuedHtml(r){
+  if(!r.coverage.deepReadRequested)return "";
+  return `<p class="queued" style="margin-top:18px">
+    <b>This wallet is being read properly in the background.</b> The read above had a browser waiting
+    on it, so it stopped at the first budget it hit. The one now queued has nothing waiting on it and
+    covers the full history. Trace this wallet again in a few minutes and the answer comes from the
+    index instead of from as much of the chain as a request had time for.</p>`;
+}
+
 function coverageHtml(r){
   const c=r.coverage,t=r.totals;
   /* The window that was read, which is not the window that was asked for the
@@ -1054,11 +1088,16 @@ function coverageHtml(r){
     ["Positions attributed",c.positionsAttributed===null
       ? `— of ${c.losingPositions}`
       : `${c.positionsAttributed} of ${c.losingPositions}`],
+    ["Positions closed",String(t.positionsClosed)],
     ["Attributed",usd(t.attributedUsd)],
     ["Unattributed",usd(t.unattributedUsd)],
     ["Realised PnL",signedUsd(t.realisedPnlUsd)],
     ["Scan time",(r.elapsedMs/1000).toFixed(1)+"s"
       +(c.stoppedOnTimeBudget?" · cut short by the clock":"")],
+    // Whether anything is being done about a read that fell short, so the row
+    // sits beside the figures that caused it rather than in a note below.
+    ["Deep read",c.deepReadRequested?"queued · retry in a few minutes"
+      :c.source==="index"?"not needed · answered from the index":"not needed"],
     ["Swaps read",Object.entries(c.swapCensus||{}).map(([k,v])=>`${k} ${v}`).join("  ")||"none"],
     ["Other wallets' swaps",String(c.foreignSwaps??0)],
     // The three below used to be measured and never shown, which is how a

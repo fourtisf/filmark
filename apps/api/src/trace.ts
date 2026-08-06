@@ -206,7 +206,8 @@ export class TraceService {
     }
 
     if (scan.swaps.length === 0) {
-      return this.#empty(source, wallet, 'no_swaps', scan, cost, startedAt, notes, 0);
+      // Nothing was accounted, so every figure below is genuinely unknown.
+      return this.#empty(source, wallet, 'no_swaps', scan, cost, startedAt, notes, []);
     }
 
     if (scan.unpricedSwaps > 0 && scan.unpricedSwaps < scan.swaps.length) {
@@ -217,6 +218,15 @@ export class TraceService {
 
     const positions = accountPositions(wallet, scan.swaps);
     const excluded = tallyExclusions(positions);
+    const closed = positions.filter((position) => position.status === 'closed');
+    /*
+     * Closed positions whose entry legs were never read.
+     *
+     * FIFO marks these `unknown_basis` because it saw an exit it has no lot
+     * for. They are the per-mint form of the wallet-wide guard below, and the
+     * reason that guard is not enough on its own.
+     */
+    const unbacked = closed.filter((position) => position.basisQuality === 'unknown_basis');
 
     /*
      * A wallet cannot sell what it never bought.
@@ -259,7 +269,7 @@ export class TraceService {
         cost,
         startedAt,
         notes,
-        positions.filter((p) => p.status === 'closed').length,
+        positions,
         excluded,
       );
     }
@@ -287,7 +297,7 @@ export class TraceService {
         cost,
         startedAt,
         notes,
-        positions.filter((p) => p.status === 'closed').length,
+        positions,
         excluded,
       );
     }
@@ -297,6 +307,43 @@ export class TraceService {
       .sort((a, b) => a.realisedPnlUsd - b.realisedPnlUsd);
 
     if (losing.length === 0) {
+      /*
+       * "Nothing closed in the red" is a claim about the wallet. It cannot be
+       * made over positions whose cost basis was never read.
+       *
+       * The guard above catches only the fully degenerate read — sells and no
+       * buys anywhere — and one surviving buy on one mint switches it off. A
+       * read that lost the entries for thirty mints and kept one on a
+       * thirty-first passed straight through it and landed here, where every
+       * unbacked position had already been dropped by `isAttributable`, and
+       * answered "nothing closed in the red" over a read that was just as
+       * broken. The count was in `excluded.unknown_basis` the whole time,
+       * contradicting the headline three rows further down the page.
+       */
+      if (unbacked.length > 0) {
+        notes.push(
+          `${unbacked.length} of ${closed.length} closed ${plural(closed.length, 'position', 'positions')} were exits this trace found no matching entry for, so they have no cost basis and no profit or loss can be computed for them. Nothing is reported rather than "nothing was lost", which would be a claim about this wallet produced by the half of its history that was not read.`,
+          ...missingBuyLegCauses(scan, {
+            lookbackDays: scan.windowDays,
+            maxSignatures: this.#scanner.budget.maxSignatures,
+            elapsedMs: Date.now() - startedAt,
+            walletTimeBudgetMs:
+              walletDeadline === undefined ? null : Math.max(0, walletDeadline - startedAt),
+          }),
+        );
+        return this.#empty(
+          source,
+          wallet,
+          'unreadable_history',
+          scan,
+          cost,
+          startedAt,
+          notes,
+          positions,
+          excluded,
+        );
+      }
+
       return this.#empty(
         source,
         wallet,
@@ -305,8 +352,17 @@ export class TraceService {
         cost,
         startedAt,
         notes,
-        positions.filter((p) => p.status === 'closed').length,
+        positions,
         excluded,
+      );
+    }
+
+    if (unbacked.length > 0) {
+      // The figures below are real, but they are computed over the positions
+      // this trace could read a basis for — not over the wallet. Saying which
+      // is the difference between a partial answer and an overstated one.
+      notes.push(
+        `${unbacked.length} of ${closed.length} closed ${plural(closed.length, 'position was', 'positions were')} an exit with no entry this trace could find, so ${plural(unbacked.length, 'it is', 'they are')} excluded from every figure below. What is reported is the part of this wallet whose cost basis was actually read.`,
       );
     }
 
@@ -518,22 +574,43 @@ export class TraceService {
     cost: { signaturesRead: number; transactionsFetched: number },
     startedAt: number,
     notes: string[],
-    positionsClosed: number,
+    positions: readonly Position[],
     excluded: Record<string, number> = {},
   ): TraceReport {
+    /*
+     * Measured where it can be, null where it cannot. Never zero.
+     *
+     * These used to be eight hardcoded zeros, and the page printed them as
+     * findings. The worst was `realisedPnlUsd` on `no_losses`: the positions
+     * had been accounted, so a real figure existed, and a wallet that closed
+     * ten profitable positions was shown a flat $0 under a heading saying
+     * nothing closed in the red. Both halves of that were the constant, not the
+     * wallet — §7.4, one method below the comment that says so.
+     */
+    const closed = positions.filter((position) => position.status === 'closed');
+    const complete = closed.filter((position) => position.basisQuality === 'complete');
+
     return {
       wallet,
       generatedAt: nowSeconds(),
       status,
       totals: {
-        attributedUsd: 0,
-        unattributedUsd: 0,
-        realisedLossUsd: 0,
-        realisedPnlUsd: 0,
-        positionsClosed,
-        positionsInTheRed: 0,
-        counterparties: 0,
-        largestCounterpartyUsd: 0,
+        // Attribution never ran on this path, so there is nothing to report.
+        attributedUsd: null,
+        unattributedUsd: null,
+        realisedLossUsd: null,
+        counterparties: null,
+        largestCounterpartyUsd: null,
+        // These only need a basis, which accounting already produced.
+        realisedPnlUsd:
+          positions.length === 0
+            ? null
+            : complete.reduce((sum, position) => sum + position.realisedPnlUsd, 0),
+        positionsClosed: closed.length,
+        positionsInTheRed:
+          positions.length === 0
+            ? null
+            : complete.filter((position) => position.realisedPnlUsd < 0).length,
       },
       tokens: [],
       counterparties: [],
@@ -710,9 +787,30 @@ function missingBuyLegCauses(scan: WalletScan, reach: CrawlReach): string[] {
         ? `${head} This wallet ran at ${read.toLocaleString('en-US')} transactions per ${lookbackDays} days, and at that density both the signature budget and the clock still cover about ${reachable.toLocaleString('en-US')} days — raise TRACE_LOOKBACK_DAYS to somewhere inside that and run it again before concluding anything else.`
         : `${head} Widening the window is not free here: at the rate this scan actually achieved, ${lookbackDays} days already spends what the trace's clock allows, so a larger TRACE_LOOKBACK_DAYS would come back cut short rather than deeper. Raise SOLANA_RPC_MAX_RPS or API_TRACE_TIMEOUT_MS first, then widen it.`,
     );
-  } else if (scan.stoppedAt === 'signature_budget' || scan.stoppedAt === 'time_budget') {
+  } else if (scan.stoppedAt === 'time_budget') {
+    /*
+     * The clock, which is the one case that names no setting worth changing.
+     *
+     * This arm used to be one sentence with no number in it, which left an
+     * operator with nothing to act on — while `reachableDays` sat two functions
+     * away holding exactly the arithmetic it needed. The rate is a property of
+     * the endpoint rather than of the config, and this scan just measured it,
+     * so what it can afford is a measurement rather than a guess.
+     */
+    const read = scan.cost.transactionsFetched;
+    const afford = reachableDays(read, reach);
+    const unread =
+      scan.transactionsUnread > 0
+        ? ` ${scan.transactionsUnread.toLocaleString('en-US')} transactions it had already found were left unopened.`
+        : '';
+
     causes.push(
-      `The crawl ran out of ${scan.stoppedAt === 'time_budget' ? 'time' : 'signature budget'} before it reached the ${lookbackDays}-day cutoff, so older history — including, most likely, the buys — was never read.`,
+      `The crawl ran out of time before it reached the ${lookbackDays}-day cutoff, so the older half of this wallet — most likely including the buys — was never read.${unread} At the rate this endpoint actually answered, a trace of this length covers about ${afford.toLocaleString('en-US')} days of this wallet. Raising TRACE_LOOKBACK_DAYS will not help while that is true; more RPC throughput (SOLANA_RPC_MAX_RPS, or more endpoints in SOLANA_RPC_URL) or a longer API_TRACE_TIMEOUT_MS will, and indexing the wallet sidesteps the clock entirely.`,
+    );
+  } else if (scan.stoppedAt === 'signature_budget') {
+    const read = scan.cost.transactionsFetched;
+    causes.push(
+      `The crawl stopped at its ${reach.maxSignatures.toLocaleString('en-US')}-signature ceiling after reading ${read.toLocaleString('en-US')}, before it reached the ${lookbackDays}-day cutoff, so older history — including, most likely, the buys — was never read. TRACE_MAX_SIGNATURES is the setting, and API_TRACE_TIMEOUT_MS has to be able to afford whatever it is raised to.`,
     );
   }
 

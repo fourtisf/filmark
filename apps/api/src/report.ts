@@ -86,19 +86,38 @@ export interface TraceToken {
   readonly positions: number;
 }
 
+/**
+ * The figures. Null everywhere attribution never ran, never zero.
+ *
+ * The four below used to be hardcoded zeros on every path that stopped before
+ * attribution — so a trace that refused to answer still reported
+ * `attributedUsd: 0`, and the page printed `$0` beside it as though it were a
+ * measurement. Worse on `no_losses`, where the positions HAD been accounted and
+ * `realisedPnlUsd: 0` overwrote a real figure: a wallet that closed ten
+ * profitable positions was shown a flat zero. That is §7.4 exactly — a constant
+ * wearing the clothes of a finding — one block below where the same fault was
+ * already fixed in `coverage`.
+ */
 export interface TraceTotals {
-  /** Sum of every attribution row. The headline figure. */
-  readonly attributedUsd: number;
+  /** Sum of every attribution row. The headline figure. Null if it never ran. */
+  readonly attributedUsd: number | null;
   /** Loss whose windows produced nothing. Never folded into `attributedUsd`. */
-  readonly unattributedUsd: number;
+  readonly unattributedUsd: number | null;
   /** Realised loss across the positions attribution ran on. */
-  readonly realisedLossUsd: number;
-  /** Realised PnL across every closed position with a complete basis. */
-  readonly realisedPnlUsd: number;
+  readonly realisedLossUsd: number | null;
+  /** Counterparties found. Null when attribution never ran; 0 is a finding. */
+  readonly counterparties: number | null;
+  readonly largestCounterpartyUsd: number | null;
+  /**
+   * Realised PnL across every closed position with a complete basis.
+   *
+   * Measured on every path that got as far as accounting positions, because it
+   * does not need attribution — only a basis. Null only when there were no
+   * swaps to account at all.
+   */
+  readonly realisedPnlUsd: number | null;
   readonly positionsClosed: number;
-  readonly positionsInTheRed: number;
-  readonly counterparties: number;
-  readonly largestCounterpartyUsd: number;
+  readonly positionsInTheRed: number | null;
 }
 
 export interface TraceCoverage {

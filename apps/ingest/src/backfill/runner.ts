@@ -42,7 +42,20 @@ export interface BackfillResult {
   readonly parseSkips: number;
   readonly oldestBlockTime: number | null;
   readonly newestBlockTime: number | null;
-  readonly reachedCutoff: boolean;
+  /**
+   * True when the crawl covered the whole window it was asked for.
+   *
+   * Two different things satisfy that and both count: walking past the cutoff,
+   * and running out of wallet before reaching it. Only a budget stopping the
+   * crawl early leaves the window uncovered.
+   *
+   * It used to mean literally "saw a signature older than the cutoff", which
+   * made a wallet younger than its own lookback report `false` — so a 365-day
+   * backfill of a six-month-old wallet crawled perfectly, wrote every row, and
+   * recorded no coverage. The index refuses without a coverage row, so that
+   * wallet could never be served no matter how many times it was indexed.
+   */
+  readonly coveredWindow: boolean;
 }
 
 export interface BackfillRunnerOptions {
@@ -90,7 +103,7 @@ export class BackfillRunner {
     let parseSkips = 0;
     let oldestBlockTime: number | null = null;
     let newestBlockTime: number | null = null;
-    let reachedCutoff = false;
+    let coveredWindow = false;
 
     this.#logger.info(
       {
@@ -117,7 +130,12 @@ export class BackfillRunner {
         ...(request.untilSignature === undefined ? {} : { until: request.untilSignature }),
         ...(signal === undefined ? {} : { signal }),
       });
-      if (page.length === 0) break;
+      if (page.length === 0) {
+        // No more signatures at all: the wallet ran out before the window did,
+        // which covers the window just as completely as reaching the cutoff.
+        coveredWindow = true;
+        break;
+      }
 
       const wanted: SignatureInfo[] = [];
       for (const entry of page) {
@@ -126,7 +144,7 @@ export class BackfillRunner {
         // Signatures come back newest first, so the first one past the cutoff
         // ends the crawl — everything after it is older still.
         if (entry.blockTime !== null && entry.blockTime < cutoffSec) {
-          reachedCutoff = true;
+          coveredWindow = true;
           before = entry.signature;
           const cutoffBudget = maxTransactions - transactionsFetched;
           if (wanted.length > 0 && cutoffBudget > 0) {
@@ -157,6 +175,7 @@ export class BackfillRunner {
       // at the bottom of this loop, `--max 20` still queued a whole page — up to
       // a thousand getTransaction calls, each spaced by the rate limiter — and
       // decided nothing except whether to pull a second page.
+      // Not covered: a cap stopped this, and there is history behind it.
       const budget = maxTransactions - transactionsFetched;
       if (budget <= 0) break;
 
@@ -174,7 +193,11 @@ export class BackfillRunner {
       );
 
       before = page[page.length - 1]?.signature;
-      if (page.length < pageSize) break;
+      // A short page is the last page: end of history again, window covered.
+      if (page.length < pageSize) {
+        coveredWindow = true;
+        break;
+      }
       if (transactionsFetched >= maxTransactions) break;
     }
 
@@ -190,7 +213,7 @@ export class BackfillRunner {
       parseSkips,
       oldestBlockTime,
       newestBlockTime,
-      reachedCutoff,
+      coveredWindow,
     };
     this.#logger.info(result, 'backfill complete');
     return result;

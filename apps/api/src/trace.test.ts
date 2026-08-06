@@ -172,6 +172,7 @@ function indexWith(swaps: readonly NormalisedSwap[] | null): IndexedWalletSource
             unpricedSwaps: 0,
             foreignSwaps: 0,
             parseSkips: {},
+            windowDays: 365,
             oldestTs: BASE_TS,
             newestTs: BASE_TS + 3600,
             truncated: false,
@@ -236,7 +237,33 @@ describe('TraceService', () => {
     const report = await service([], []).trace(VICTIM);
     expect(report.status).toBe('no_swaps');
     expect(report.counterparties).toHaveLength(0);
-    expect(report.totals.attributedUsd).toBe(0);
+    // Null, not zero. Attribution never ran, so "$0 attributed" would be a
+    // constant printed where a measurement belongs — the page renders "—".
+    expect(report.totals.attributedUsd).toBeNull();
+    expect(report.totals.realisedPnlUsd).toBeNull();
+  });
+
+  it('reports the PnL it measured on a wallet that simply did not lose', async () => {
+    /*
+     * The zero that was really a fabrication.
+     *
+     * `no_losses` runs after positions are accounted, so a realised figure
+     * exists — and it was being overwritten with a hardcoded 0. A wallet that
+     * closed a position at +$300 was shown a flat zero under a heading saying
+     * nothing closed in the red, which is true, beside a number that was not.
+     */
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 100, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 400, offsetSec: 60 });
+
+    const report = await service([buy, sell], [buy, sell]).trace(VICTIM);
+
+    expect(report.status).toBe('no_losses');
+    expect(report.totals.realisedPnlUsd).toBeCloseTo(300, 4);
+    expect(report.totals.positionsClosed).toBe(1);
+    expect(report.totals.positionsInTheRed).toBe(0);
+    // Attribution still never ran, so these stay unknown.
+    expect(report.totals.attributedUsd).toBeNull();
+    expect(report.totals.counterparties).toBeNull();
   });
 
   it('reports no_losses when every closed position made money', async () => {
@@ -775,5 +802,99 @@ describe('mergeIntervals', () => {
 
   it('handles an empty list', () => {
     expect(mergeIntervals([])).toEqual([]);
+  });
+});
+
+describe('TraceService partial basis loss', () => {
+  /*
+   * The hole in the sells-with-no-buys guard.
+   *
+   * That guard sums the census across the whole wallet, so a single buy
+   * anywhere switches it off. A read that lost the entry legs for many mints
+   * and kept one on another therefore walked straight past it — every unbacked
+   * position was dropped by `isAttributable`, and the trace answered "nothing
+   * closed in the red" over a read that was just as broken as the one the guard
+   * exists to refuse.
+   */
+  it('refuses to say nothing was lost when most entry legs were never read', async () => {
+    const swaps: NormalisedSwap[] = [];
+
+    // One mint read properly, and closed flat so it contributes no loss.
+    swaps.push(
+      makeSwap({
+        wallet: VICTIM,
+        side: 'buy',
+        base: 100,
+        usd: 100,
+        offsetSec: 0,
+        mint: 'GOOD',
+        poolId: 'poolGOOD',
+      }),
+    );
+    swaps.push(
+      makeSwap({
+        wallet: VICTIM,
+        side: 'sell',
+        base: 100,
+        usd: 100,
+        offsetSec: 60,
+        mint: 'GOOD',
+        poolId: 'poolGOOD',
+      }),
+    );
+
+    // Five more whose buys sat outside the window: exits with no entry.
+    for (let i = 0; i < 5; i += 1) {
+      swaps.push(
+        makeSwap({
+          wallet: VICTIM,
+          side: 'sell',
+          base: 100,
+          usd: 40,
+          offsetSec: 120 + i,
+          mint: `LOST${i}`,
+          poolId: `poolLOST${i}`,
+        }),
+      );
+    }
+
+    const report = await service(swaps, swaps).trace(VICTIM);
+
+    // The old behaviour was 'no_losses' — "Nothing closed in the red."
+    expect(report.status).toBe('unreadable_history');
+    expect(report.coverage.excluded.unknown_basis).toBe(5);
+    expect(report.notes.join(' ')).toContain('found no matching entry for');
+  });
+
+  it('still says nothing was lost when every basis really was read', async () => {
+    // The honest case has to keep working, or the guard just moved the lie.
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 100, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+
+    const report = await service([buy, sell], [buy, sell]).trace(VICTIM);
+
+    expect(report.status).toBe('no_losses');
+  });
+
+  it('says which part of the wallet it stands behind when it does find a loss', async () => {
+    const swaps: NormalisedSwap[] = [
+      makeSwap({ wallet: VICTIM, side: 'buy', base: 1000, usd: 1000, offsetSec: 0 }),
+      makeSwap({ wallet: VICTIM, side: 'sell', base: 1000, usd: 250, offsetSec: 600 }),
+      // An exit with no entry, on another mint.
+      makeSwap({
+        wallet: VICTIM,
+        side: 'sell',
+        base: 50,
+        usd: 20,
+        offsetSec: 700,
+        mint: 'LOST',
+        poolId: 'poolLOST',
+      }),
+    ];
+
+    const report = await service(swaps, swaps).trace(VICTIM);
+
+    expect(report.coverage.excluded.unknown_basis).toBe(1);
+    expect(report.notes.join(' ')).toContain('excluded from every figure below');
   });
 });
