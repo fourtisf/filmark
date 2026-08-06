@@ -1,4 +1,5 @@
 import {
+  RateLimiter,
   SECONDS_PER_MINUTE,
   UpstreamError,
   describeError,
@@ -51,6 +52,8 @@ export interface PythClientOptions {
   readonly benchmarksUrl?: string;
   readonly hermesUrl?: string;
   readonly feedId?: string;
+  /** Requests a second to Benchmarks. It is public and shared; keep it modest. */
+  readonly maxRequestsPerSecond?: number;
   readonly maxAttempts?: number;
   readonly timeoutMs?: number;
   readonly logger?: Logger;
@@ -80,10 +83,21 @@ export class PythClient {
   readonly #feedId: string;
   readonly #maxAttempts: number;
   readonly #timeoutMs: number;
+  readonly #limiter: RateLimiter;
   readonly #logger: Logger;
   readonly #fetch: typeof fetch;
 
   constructor(options: PythClientOptions = {}) {
+    /*
+     * Benchmarks was the one upstream here with no limiter at all.
+     *
+     * That was survivable while the windows ran one after another — the round
+     * trip was the pacing. Overlapping them removed it, and a 60-day backfill
+     * went straight into `HTTP 429` on every attempt and took the whole run
+     * with it. A shared public endpoint deserves the same manners as a metered
+     * one: a rate, and a client that slows when it is told to.
+     */
+    this.#limiter = new RateLimiter(options.maxRequestsPerSecond ?? 3);
     this.#benchmarksUrl = (options.benchmarksUrl ?? 'https://benchmarks.pyth.network').replace(
       /\/$/,
       '',
@@ -224,6 +238,7 @@ export class PythClient {
   async #getJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
     return retry(
       async (attempt) => {
+        await this.#limiter.acquire(signal);
         const controller = new AbortController();
         const timer = setTimeout(() => {
           controller.abort();
@@ -239,11 +254,27 @@ export class PythClient {
             signal: controller.signal,
           });
           if (!response.ok) {
+            // Same bargain as the RPC client: the endpoint's refusal outranks
+            // the configured rate, and retrying at the pace just rejected only
+            // spends the attempts finding that out again.
+            if (response.status === 429 && this.#limiter.backOff()) {
+              this.#logger.warn(
+                { url: url.pathname, rate: Number(this.#limiter.effectiveRate.toFixed(2)) },
+                'Pyth rate limited; slowing to below the configured rate',
+              );
+            }
             throw new UpstreamError(`Pyth request failed with HTTP ${response.status}`, {
-              context: { url: url.pathname, status: response.status, attempt },
+              context: {
+                url: url.pathname,
+                status: response.status,
+                attempt,
+                retryAfter: response.headers.get('retry-after'),
+              },
             });
           }
-          return (await response.json()) as T;
+          const parsed = (await response.json()) as T;
+          this.#limiter.recover();
+          return parsed;
         } catch (error) {
           if (error instanceof UpstreamError) throw error;
           throw new UpstreamError('Pyth request failed', {

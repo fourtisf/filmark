@@ -12,6 +12,8 @@ const booleanish = z
 
 const port = z.coerce.number().int().min(1).max(65535);
 const positiveInt = z.coerce.number().int().positive();
+/** Rates are not always whole: a limit of one request every two seconds is 0.5. */
+const positiveNumber = z.coerce.number().positive();
 const nonNegativeInt = z.coerce.number().int().nonnegative();
 
 const configSchema = z.object({
@@ -51,6 +53,16 @@ const configSchema = z.object({
 
   PYTH_HERMES_URL: z.string().url().default('https://hermes.pyth.network'),
   PYTH_BENCHMARKS_URL: z.string().url().default('https://benchmarks.pyth.network'),
+  /**
+   * Requests a second to Pyth Benchmarks.
+   *
+   * It is a free public endpoint with no key, so the limit is shared with
+   * everyone else pointed at it, and a range of any size arrives as a series of
+   * 5,000-bar windows. A backfill fired them as fast as it could and was
+   * refused outright. Modest by default; raise it only if Benchmarks stops
+   * complaining.
+   */
+  PYTH_MAX_RPS: positiveNumber.default(3),
   /** Pyth SOL/USD price feed id, hex, no 0x prefix. */
   PYTH_SOL_USD_FEED_ID: z
     .string()

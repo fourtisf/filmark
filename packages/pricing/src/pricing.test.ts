@@ -152,6 +152,8 @@ describe('PythClient', () => {
     return new PythClient({
       feedId: 'ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
       maxAttempts: 1,
+      // Unmetered in tests; the pacing is asserted on its own below.
+      maxRequestsPerSecond: 10_000,
       fetchImpl: async (input) =>
         new Response(JSON.stringify(handler(new URL(input))), {
           status: 200,
@@ -159,6 +161,48 @@ describe('PythClient', () => {
         }),
     });
   }
+
+  it('paces its requests instead of firing a year of them at a public endpoint', async () => {
+    /*
+     * Benchmarks was the one upstream with no limiter at all. That survived
+     * while the windows ran end to end — the round trip was the pacing.
+     * Overlapping them removed it, and a 60-day backfill went straight into
+     * `HTTP 429` on every attempt and took the whole run down with it.
+     */
+    const client = new PythClient({
+      maxAttempts: 1,
+      maxRequestsPerSecond: 4, // 250ms apart
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ s: 'no_data' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+
+    // 20,000 minutes is five windows: four gaps of 250ms at the very least.
+    const started = Date.now();
+    await client.fetchCandles(BASE, BASE + 20_000 * MINUTE);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+  });
+
+  it('slows further when Benchmarks says no', async () => {
+    let call = 0;
+    const client = new PythClient({
+      maxAttempts: 3,
+      maxRequestsPerSecond: 1000,
+      fetchImpl: async () => {
+        call += 1;
+        if (call === 1) return new Response('slow down', { status: 429 });
+        return new Response(JSON.stringify({ s: 'no_data' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+
+    await expect(client.fetchCandles(BASE, BASE + MINUTE)).resolves.toEqual([]);
+    expect(call).toBe(2);
+  });
 
   it('maps TradingView bars onto minute-aligned candles', async () => {
     const client = clientWith(() => ({
@@ -277,6 +321,8 @@ describe('PythClient', () => {
     let peak = 0;
     const client = new PythClient({
       maxAttempts: 1,
+      // The limiter is asserted separately; here it must not be the constraint.
+      maxRequestsPerSecond: 10_000,
       fetchImpl: async () => {
         inFlight += 1;
         peak = Math.max(peak, inFlight);

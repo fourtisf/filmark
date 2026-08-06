@@ -50,6 +50,7 @@ export function createServices(config: Config): ApiServices {
       benchmarksUrl: config.PYTH_BENCHMARKS_URL,
       hermesUrl: config.PYTH_HERMES_URL,
       feedId: config.PYTH_SOL_USD_FEED_ID,
+      maxRequestsPerSecond: config.PYTH_MAX_RPS,
       logger,
     }),
     maxStalenessSec: config.PRICE_MAX_STALENESS_SEC,

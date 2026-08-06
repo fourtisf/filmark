@@ -87,6 +87,7 @@ export function createServices(options: CreateServicesOptions = {}): Services {
     benchmarksUrl: config.PYTH_BENCHMARKS_URL,
     hermesUrl: config.PYTH_HERMES_URL,
     feedId: config.PYTH_SOL_USD_FEED_ID,
+    maxRequestsPerSecond: config.PYTH_MAX_RPS,
     logger,
   });
   const prices = new PriceService({ repository: solUsd, pyth, series, logger });
