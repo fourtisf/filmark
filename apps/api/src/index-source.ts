@@ -108,6 +108,10 @@ export class ClickHouseWalletSource implements IndexedWalletSource {
       // count here and reporting a zero would be a measurement, not a guess.
       foreignSwaps: 0,
       parseSkips: {},
+      // Rows arrive already priced — the backfill that wrote them paid for the
+      // SOL/USD series with no browser waiting on it. There is no warm-up
+      // inside this request to cut short.
+      pricesCutShort: false,
       oldestTs: swaps[0]?.blockTime ?? null,
       newestTs: swaps[swaps.length - 1]?.blockTime ?? null,
       truncated: false,

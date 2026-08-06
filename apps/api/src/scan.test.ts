@@ -1,6 +1,16 @@
+import bs58 from 'bs58';
 import { describe, expect, it } from 'vitest';
-import { silentLogger } from '@exitliquidity/core';
+import { PUMP_FUN_PROGRAM_ID, silentLogger } from '@exitliquidity/core';
+import { IX_BUY } from '@exitliquidity/parsers';
+import {
+  TRADE_EVENT_DISCRIMINATOR,
+  TransactionBuilder,
+  anchorEventData,
+  encodeTradeEvent,
+  fakePubkey,
+} from '@exitliquidity/parsers/testing';
 import type { QuoteOracle } from '@exitliquidity/pricing';
+import type { RawInstruction, RawTransaction } from '@exitliquidity/solana';
 import type { SignatureInfo, SolanaRpcClient } from '@exitliquidity/solana';
 import { ChainScanner, type ScanBudget } from './scan.js';
 
@@ -75,6 +85,73 @@ const NO_PRICES: QuoteOracle = { price: () => ({ price: null, reason: 'no_price_
 
 function scannerFor(rpc: SolanaRpcClient, budget: ScanBudget = BUDGET): ChainScanner {
   return new ChainScanner({ rpc, oracle: () => NO_PRICES, budget, logger: silentLogger });
+}
+
+/**
+ * One pump.fun buy, encoded the way the program emits it.
+ *
+ * The stub above answers every `getTransaction` with null, which is enough for
+ * the crawl's own accounting and reaches no further: nothing parses, so nothing
+ * is normalised and the price warm-up is never called. Anything about pricing
+ * needs a transaction that actually decodes, so this builds one rather than
+ * reaching past the parser with a mock.
+ */
+function pumpFunBuy(blockTime: number, trader: string): RawTransaction {
+  const mint = fakePubkey(8);
+  const builder = new TransactionBuilder().blockTime(blockTime);
+  const accounts = [fakePubkey(2), fakePubkey(3), mint, fakePubkey(4), trader];
+
+  const ix = builder.topLevel({
+    programId: PUMP_FUN_PROGRAM_ID,
+    accounts,
+    data: IX_BUY.bytes,
+  });
+  builder.inner(ix, {
+    programId: PUMP_FUN_PROGRAM_ID,
+    accounts: [],
+    data: anchorEventData(
+      TRADE_EVENT_DISCRIMINATOR,
+      encodeTradeEvent({
+        mint,
+        solAmount: 1_000_000_000n,
+        tokenAmount: 1_000_000n,
+        isBuy: true,
+        user: trader,
+        timestamp: BigInt(blockTime),
+      }),
+    ),
+  });
+
+  return builder.build();
+}
+
+/** Re-encodes a fixture into the `getTransaction` JSON the scanner reads. */
+function asRpcResponse(raw: RawTransaction): unknown {
+  const encode = (ix: RawInstruction): unknown => ({
+    programIdIndex: ix.programIdIndex,
+    accounts: [...ix.accountIndexes],
+    data: bs58.encode(ix.data),
+    stackHeight: ix.stackHeight ?? null,
+  });
+
+  return {
+    slot: Number(raw.slot),
+    blockTime: raw.blockTime,
+    transaction: {
+      signatures: [raw.signature],
+      message: { accountKeys: [...raw.accountKeys], instructions: raw.instructions.map(encode) },
+    },
+    meta: {
+      err: null,
+      innerInstructions: raw.innerInstructions.map((group) => ({
+        index: group.index,
+        instructions: group.instructions.map(encode),
+      })),
+      preTokenBalances: [],
+      postTokenBalances: [],
+      loadedAddresses: { writable: [], readonly: [] },
+    },
+  };
 }
 
 describe('ChainScanner.scanWallet', () => {
@@ -180,5 +257,97 @@ describe('ChainScanner.scanWallet', () => {
     // Newest first is what makes dropping the tail equivalent to a shorter
     // lookback rather than to a hole in the middle of the history.
     expect(fetched()[0]).toBe('sig0');
+  });
+});
+
+describe('ChainScanner price warm-up', () => {
+  /* The venue event names the trader, and the scan keeps only that wallet's own
+     swaps — so the address traced here has to be the one inside the fixture. */
+  const TRADER = fakePubkey(7);
+
+  /**
+   * A crawl whose transactions decode, so pricing is actually reached.
+   *
+   * `perCallMs` is deliberately zero here: the wait under test is the one after
+   * the chain has answered, and mixing the two would leave a failure ambiguous
+   * about which budget it proved.
+   */
+  function priceableCrawl(
+    now: number,
+    warm: (fromTs: number, toTs: number, signal?: AbortSignal) => Promise<void>,
+  ): ChainScanner {
+    const signatures = history(1, now);
+    const stub = {
+      transactionBatchSize: 10,
+      transactionWindowSize: 30,
+      getSignaturesForAddress: async (
+        _address: string,
+        options: { before?: string },
+      ): Promise<SignatureInfo[]> => (options.before === undefined ? signatures : []),
+      getTransactions: async (batch: readonly string[]): Promise<unknown[]> =>
+        batch.map(() => asRpcResponse(pumpFunBuy(now, TRADER))),
+      getMintDecimals: async (mints: readonly string[]): Promise<(number | null)[]> =>
+        mints.map(() => 6),
+    };
+
+    return new ChainScanner({
+      rpc: stub as unknown as SolanaRpcClient,
+      oracle: () => NO_PRICES,
+      budget: BUDGET,
+      warm,
+      logger: silentLogger,
+    });
+  }
+
+  it('stops waiting on the price feed when the crawl’s clock runs out', async () => {
+    /*
+     * The one wait in a trace that had no budget behind it.
+     *
+     * Every RPC ceiling here has a field on the report saying what it cost, and
+     * this fetch had neither — it runs *after* the chain has answered, against
+     * a shared public service that meters over a window and replies
+     * `Retry-After: 58`. A trace could read its wallet in seconds and then sit
+     * in Benchmarks' backoff until the request timed out, and the only thing
+     * the coverage block had to offer was a slow-looking RPC endpoint.
+     */
+    const now = Math.floor(Date.now() / 1000);
+    let released: (() => void) | undefined;
+    const stuck = new Promise<void>((resolve) => {
+      released = resolve;
+    });
+
+    const scanner = priceableCrawl(now, () => stuck);
+    const started = Date.now();
+    const scan = await scanner.scanWallet(TRADER, undefined, Date.now() + 60);
+
+    expect(scan.pricesCutShort).toBe(true);
+    // Answered on the deadline rather than on the feed, and the swap is still
+    // there — unpriced, which the report already knows how to explain.
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(scan.swaps).toHaveLength(1);
+    expect(scan.unpricedSwaps).toBe(1);
+
+    released?.();
+  });
+
+  it('waits for a feed that answers, and says so', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const seen: { fromTs: number; toTs: number }[] = [];
+
+    const scan = await priceableCrawl(now, async (fromTs, toTs) => {
+      seen.push({ fromTs, toTs });
+    }).scanWallet(TRADER, undefined, Date.now() + 10_000);
+
+    expect(scan.pricesCutShort).toBe(false);
+    expect(seen).toEqual([{ fromTs: now, toTs: now }]);
+  });
+
+  it('lets a failed warm-up travel rather than reading it as a slow feed', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const scanner = priceableCrawl(now, () => Promise.reject(new Error('benchmarks refused')));
+
+    await expect(scanner.scanWallet(TRADER, undefined, Date.now() + 10_000)).rejects.toThrow(
+      'benchmarks refused',
+    );
   });
 });

@@ -214,6 +214,47 @@ build their coverage through one function. §7.4 forbids fabricated figures in
 the product; a constant wearing the clothes of a measurement is the same fault
 turned inwards, where it is harder to notice and does more damage.
 
+The same fault survived one layer up, in the headline. `realisedPnlUsd` and
+`positionsInTheRed` were summed over closed positions with a complete basis —
+correct arithmetic, and 0 whenever that selection is empty. A wallet whose entry
+legs were never read has exactly that shape, so the console printed a flat
+**$0** under "Realised PnL" beside an outcome saying every figure on the page
+was void. Both are now null when positions closed and not one of them had a
+basis this trace could read; a wallet that closed nothing keeps its 0, because
+there "nothing was realised" is the measurement.
+
+### A finding and the action taken on it are two fields
+
+`coverage.deepReadRequested` says a wallet was queued for an out-of-band read.
+It was also, by omission, the only signal that one was _wanted_ — so with
+`API_USE_INDEX=false` nothing was ever requested and the console rendered "deep
+read — not needed" beside "unreadable history". The page told the reader nothing
+was wrong on the one trace that had already declared itself void.
+
+`coverage.deepReadNeeded` now carries the finding and `deepReadRequested` the
+action, because a deployment can produce the first without the second. This is
+the same shape as the rule above: needed-and-not-queued is a fact about the
+service, and collapsing it into "not needed" is a constant standing in for a
+measurement nobody took.
+
+### The price warm-up is bounded by the trace's clock
+
+Every wait inside a trace is budgeted and reported — except one. The SOL/USD
+fill runs _after_ the chain has answered, against Pyth Benchmarks, which meters
+over a window rather than per second and replies `Retry-After: 58`; the client
+honours that by pausing, and the pause is shared by every trace in the process.
+A trace could read a wallet in fifteen seconds, spend ninety more inside that
+pause, and come back with a coverage block whose only slow-looking number was
+the RPC crawl.
+
+The warm-up now stops at the crawl's own deadline and sets
+`coverage.pricesCutShort`. Abandoning the wait does not abandon the fetch — the
+cache is process-wide and the fill continues — so the cost is that this trace
+prices from the minutes already held and counts the rest in `swapsUnpriced`,
+which the report already knows how to explain. The alternative was a request
+that spends its clock on an upstream it has no budget for and then blames the
+one it does.
+
 ### The parser's error boundary sits per instruction, not per transaction
 
 `registry.ts` catches a throw from a parser so one broken venue cannot stop the

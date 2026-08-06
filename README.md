@@ -98,6 +98,16 @@ returns `unpriced_history` instead, and `coverage.priceSeries` says what minutes
 the service actually holds. Nothing about the wallet has to change for this to
 clear; retrying once the feed answers does it.
 
+`coverage.pricesCutShort` splits that into its two causes, which want opposite
+responses. The price fetch is the one wait in a trace that is neither the chain
+nor bounded by a `TRACE_*` ceiling, and it happens _after_ every transaction has
+been read: Benchmarks meters over a window rather than per second and answers
+`Retry-After: 58`, which the client honours by pausing. A trace that read its
+wallet in fifteen seconds and then sat in that pause used to come back looking
+like a slow RPC endpoint. The warm-up now stops at the crawl's own deadline and
+sets this flag — the fill carries on in the background, so the answer is to
+trace again in a minute rather than to change a setting.
+
 **And `coverage.stoppedOnTimeBudget`.** A trace is bounded twice: in RPC calls by
 the `TRACE_*` ceilings, and in wall clock by `API_TRACE_TIMEOUT_MS`. The clock is
 the one that moves when a provider throttles. When it is what ended the crawl the
@@ -186,6 +196,14 @@ and `INDEX_REQUEST_STALENESS_SEC` (when a covered wallet is worth re-reading).
 `coverage.deepReadRequested` is true only when the row was actually written, and
 the console tells the visitor to come back only then — a queue place nobody
 wrote down would be a claim the data does not support.
+
+`coverage.deepReadNeeded` is the other half, and it is reported whether or not
+anything is wired up to act on it. The two were one field, and with
+`API_USE_INDEX=false` nothing was ever requested, so the console printed **deep
+read — not needed** beside **unreadable history**: the one row that could have
+named the fix said there was nothing to fix. Needed-and-not-queued is a fact
+about the deployment rather than about the wallet, and it will repeat for every
+visitor until the index and the worker are both running.
 
 ### More than one RPC endpoint
 

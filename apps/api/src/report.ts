@@ -112,8 +112,12 @@ export interface TraceTotals {
    * Realised PnL across every closed position with a complete basis.
    *
    * Measured on every path that got as far as accounting positions, because it
-   * does not need attribution — only a basis. Null only when there were no
-   * swaps to account at all.
+   * does not need attribution — only a basis. Null when there was nothing to
+   * account, and null when positions closed but not one of them had a basis
+   * this trace could read: summing an empty selection gives 0, and that 0 was
+   * being printed under "Realised PnL" on the very traces that had just refused
+   * to answer because they could not find a single entry leg. A figure that is
+   * arithmetic over nothing is not a measurement of the wallet (§7.4).
    */
   readonly realisedPnlUsd: number | null;
   readonly positionsClosed: number;
@@ -165,6 +169,19 @@ export interface TraceCoverage {
     readonly toTs: number;
     readonly minutes: number;
   } | null;
+  /**
+   * True when the price warm-up was abandoned to keep the trace's clock.
+   *
+   * The competing explanation for a slow trace, and one the coverage block
+   * could not previously offer. Every RPC wait here is bounded by a `TRACE_*`
+   * ceiling and reported; the SOL/USD fetch was neither, and it happens after
+   * the chain has already answered — Pyth's Benchmarks meters over a window and
+   * asks to be left alone for a minute at a time. A trace that read its wallet
+   * in fifteen seconds and spent ninety more waiting on a price feed used to
+   * come back looking like a slow RPC endpoint. When this is true, the unpriced
+   * counts below are a property of that wait rather than of the feed's history.
+   */
+  readonly pricesCutShort: boolean;
   /** True when the signature budget ran out before the lookback window did. */
   readonly historyTruncated: boolean;
   /**
@@ -203,6 +220,20 @@ export interface TraceCoverage {
    * data does not support (§7.1).
    */
   readonly deepReadRequested: boolean;
+  /**
+   * True when a full out-of-band read is what this trace was missing.
+   *
+   * The other half of the field above, and the reason it was not enough on its
+   * own. `deepReadRequested: false` was rendered as "not needed", which is one
+   * of two very different things: a trace the chain answered properly, or a
+   * trace that ran out of road with nothing wired up to do anything about it.
+   * The console printed "not needed" beside "unreadable history" — the page
+   * telling the reader nothing was wrong on the one trace that had already said
+   * every figure on it was void. `needed` is the finding; `requested` is
+   * whether anything was done about it, and they are reported separately
+   * because a deployment can produce the first without the second.
+   */
+  readonly deepReadNeeded: boolean;
   /** Losing positions found. Always measured. */
   readonly losingPositions: number;
   /**

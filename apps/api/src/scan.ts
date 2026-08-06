@@ -115,6 +115,18 @@ export interface WalletScan {
   /** Venue instructions refused by a parser, by venue and reason. */
   readonly parseSkips: Readonly<Record<string, number>>;
   /**
+   * True when the SOL/USD warm-up was abandoned to keep the crawl's clock.
+   *
+   * The one upstream a trace waits on that is neither the chain nor bounded by
+   * a `TRACE_*` ceiling. Pyth's Benchmarks meters over a window rather than per
+   * second and answers `Retry-After: 58`, which the client honours by pausing —
+   * inside the request, after every transaction has already been read. A trace
+   * could therefore spend most of its clock on a price series while the
+   * coverage block said nothing about it, and the wallet crawl took the blame
+   * for being slow. Carried here so the report can name the right upstream.
+   */
+  readonly pricesCutShort: boolean;
+  /**
    * Days of history this scan set out to cover.
    *
    * Carried on the scan rather than read off the trace's own limits, because
@@ -192,6 +204,9 @@ export interface ScannerOptions {
   readonly logger?: Logger;
 }
 
+/** Race marker for the price warm-up. A sentinel, so `null` stays a real result. */
+const TIMED_OUT = Symbol('price warm-up deadline');
+
 export class ChainScanner {
   readonly #rpc: SolanaRpcClient;
   readonly #oracle: () => QuoteOracle;
@@ -233,7 +248,7 @@ export class ChainScanner {
     // entry legs are placed by a bot or an aggregator sees them land under that
     // bot's address. Those swaps are counted rather than silently dropped.
     const mine = read.parsed.filter((entry) => entry.swap.wallet === wallet);
-    const normalised = await this.#normalise(mine, signal);
+    const normalised = await this.#normalise(mine, signal, deadline);
 
     /*
      * The window that was *read*, not the window that was crawled.
@@ -259,6 +274,7 @@ export class ChainScanner {
       // through something else — a bot or a router whose own account signs.
       foreignSwaps: read.parsed.length - mine.length,
       parseSkips,
+      pricesCutShort: normalised.pricesCutShort,
       windowDays: this.#budget.lookbackDays,
       oldestTs: times.length > 0 ? Math.min(...times) : null,
       newestTs: times.length > 0 ? Math.max(...times) : null,
@@ -350,6 +366,7 @@ export class ChainScanner {
     const normalised = await this.#normalise(
       read.parsed.filter((entry) => entry.swap.poolId === poolId),
       signal,
+      deadline,
     );
 
     return {
@@ -483,13 +500,15 @@ export class ChainScanner {
   async #normalise(
     parsed: readonly ParsedWithTime[],
     signal?: AbortSignal,
-  ): Promise<{ swaps: NormalisedSwap[]; unpriced: number }> {
-    if (parsed.length === 0) return { swaps: [], unpriced: 0 };
+    deadline?: Deadline,
+  ): Promise<{ swaps: NormalisedSwap[]; unpriced: number; pricesCutShort: boolean }> {
+    if (parsed.length === 0) return { swaps: [], unpriced: 0, pricesCutShort: false };
 
     const times = parsed.map((entry) => entry.blockTime).filter(isNumber);
-    if (times.length > 0 && this.#warm !== undefined) {
-      await this.#warm(Math.min(...times), Math.max(...times), signal);
-    }
+    const warmed =
+      times.length === 0
+        ? true
+        : await this.#warmPrices(Math.min(...times), Math.max(...times), signal, deadline);
     const oracle = this.#oracle();
 
     const known = new Map<string, number>();
@@ -561,7 +580,81 @@ export class ChainScanner {
       });
     }
 
-    return { swaps: out, unpriced };
+    return { swaps: out, unpriced, pricesCutShort: !warmed };
+  }
+
+  /**
+   * Fills the SOL/USD series, but not past the clock the crawl was given.
+   *
+   * Every other wait in a trace is bounded: the signature ceiling, the
+   * transaction ceiling and the deadline all have a field on the report behind
+   * them. This one was not, and it is the only wait that happens *after* the
+   * chain has already answered — so a trace could read a wallet in fifteen
+   * seconds, spend ninety more inside Benchmarks' `Retry-After`, and come back
+   * with a coverage block blaming the RPC endpoint. The price fetch is metered
+   * over a window by a shared public service; it is exactly the upstream a
+   * request cannot afford to wait on indefinitely.
+   *
+   * Giving up on the wait does not give up on the fetch. The cache is
+   * process-wide and the fill keeps running behind this trace, so the minutes
+   * land for the next one; this trace prices from what the series already holds
+   * and `unpricedSwaps` counts the rest, which the report already explains.
+   */
+  async #warmPrices(
+    fromTs: number,
+    toTs: number,
+    signal?: AbortSignal,
+    deadline?: Deadline,
+  ): Promise<boolean> {
+    if (this.#warm === undefined) return true;
+
+    const warm = this.#warm(fromTs, toTs, signal);
+    if (deadline === undefined) {
+      await warm;
+      return true;
+    }
+
+    // Settled either way, so abandoning the race cannot leave a rejected
+    // promise with nobody listening — which crashes the process, not the trace.
+    const settled = warm.then(
+      () => null,
+      (error: unknown) =>
+        error instanceof Error ? error : new Error(`price warm-up failed: ${String(error)}`),
+    );
+
+    const left = deadline - Date.now();
+    if (left <= 0) {
+      this.#logger.warn(
+        { fromTs, toTs },
+        'no clock left to warm the SOL/USD series; pricing from what is held',
+      );
+      return false;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<typeof TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(TIMED_OUT);
+      }, left);
+      timer.unref?.();
+    });
+
+    try {
+      const outcome = await Promise.race([settled, expired]);
+      if (outcome === TIMED_OUT) {
+        this.#logger.warn(
+          { fromTs, toTs, waitedMs: left },
+          'the SOL/USD series did not fill inside this trace’s clock; pricing from what is held and reporting the rest unpriced',
+        );
+        return false;
+      }
+      // A warm-up that failed outright is the caller's business — an abort in
+      // particular has to keep travelling rather than be read as a slow feed.
+      if (outcome !== null) throw outcome;
+      return true;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 

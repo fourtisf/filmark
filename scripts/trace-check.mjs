@@ -148,7 +148,13 @@ const row = (label, value) => stdout.write(`  ${label.padEnd(22)}${value}\n`);
  * like an old binary. `coverage` is the contract, so its own shape is the
  * cheapest honest version marker there is.
  */
-const EXPECTED_COVERAGE_FIELDS = ['swapsUnpriced', 'priceSeries', 'stoppedOnTimeBudget'];
+const EXPECTED_COVERAGE_FIELDS = [
+  'swapsUnpriced',
+  'priceSeries',
+  'stoppedOnTimeBudget',
+  'deepReadNeeded',
+  'pricesCutShort',
+];
 const missingFields = EXPECTED_COVERAGE_FIELDS.filter((field) => !(field in (c ?? {})));
 if (missingFields.length > 0) {
   stdout.write(
@@ -169,10 +175,19 @@ const sideTotal = (suffix) => {
 const buys = sideTotal(':buy');
 const sells = sideTotal(':sell');
 
-// The window read, which is not the window asked for once a budget cuts the
-// crawl short. Printing the configured number there is a setting dressed as a
-// measurement, and it is the first thing to mislead a reader looking for depth.
-const daysRead = c.fromTs && c.toTs ? Math.max(1, Math.round((c.toTs - c.fromTs) / 86400)) : null;
+/*
+ * The window read, which is not the window asked for once a budget cuts the
+ * crawl short. Printing the configured number there is a setting dressed as a
+ * measurement, and it is the first thing to mislead a reader looking for depth.
+ *
+ * Measured back from when the trace ran, not across the trades it found.
+ * `toTs - fromTs` is how long the wallet was *active*, and for a wallet that
+ * has been quiet lately those are different numbers: a clean read to the end of
+ * a wallet's history reported "29 days of 60 asked for  ← the budget, not the
+ * wallet", which is this script accusing a budget that did nothing.
+ */
+const daysRead = c.fromTs ? Math.max(1, Math.round((body.generatedAt - c.fromTs) / 86400)) : null;
+const wholeHistory = c.crawlStoppedAt === 'end_of_history';
 
 stdout.write(`\n${wallet}\n  ${response.status} in ${seconds}s\n\n`);
 row('status', body.status);
@@ -184,14 +199,19 @@ row(
   'window read',
   daysRead === null
     ? `— of ${c.lookbackDays} days asked for`
-    : `${daysRead} days of ${c.lookbackDays} asked for` +
+    : wholeHistory
+      ? `${daysRead} days — the whole of this wallet, which is shorter than the window`
+      : `${daysRead} days of ${c.lookbackDays} asked for` +
         (daysRead < c.lookbackDays * 0.9 ? '  ← the budget, not the wallet' : ''),
 );
 row('swaps read', census.length === 0 ? 'none' : census.map(([k, v]) => `${k} ${v}`).join('  '));
 row("others' swaps", c.foreignSwaps);
 row(
   'swaps unpriced',
-  `${c.swapsUnpriced ?? '—'}${c.poolSwapsUnpriced ? ` (${c.poolSwapsUnpriced} in pools)` : ''}`,
+  `${c.swapsUnpriced ?? '—'}${c.poolSwapsUnpriced ? ` (${c.poolSwapsUnpriced} in pools)` : ''}` +
+    // Which of the two an unpriced count is: a feed with no such history, or a
+    // feed this trace stopped waiting on. Only the second is about the clock.
+    (c.pricesCutShort === true ? '  ← the price feed ran out of clock, not of history' : ''),
 );
 row(
   'price series',
@@ -232,7 +252,14 @@ row(
       ? 'not needed — answered from the index'
       : c.deepReadRequested === undefined
         ? 'unknown (older API — redeploy)'
-        : 'not queued',
+        : /* Needed and not queued is a deployment fact, not a wallet fact, and
+             the two were indistinguishable while "not queued" covered both. A
+             trace that the chain could not answer, on a service with no index
+             behind it, is a dead end that will repeat for every visitor until
+             API_USE_INDEX is on and the worker is running. */
+          c.deepReadNeeded === true
+          ? 'needed and not queued — API_USE_INDEX is off, so nothing is wired up to run one'
+          : 'not needed',
 );
 row('positions closed', t.positionsClosed);
 row('excluded', Object.keys(c.excluded ?? {}).length === 0 ? 'none' : JSON.stringify(c.excluded));
@@ -305,6 +332,14 @@ const VERDICTS = {
         `  1. The crawl ran out of ${c.crawlStoppedAt === 'time_budget' ? 'time' : 'budget'} before the ${c.lookbackDays}-day cutoff, so the\n` +
           `     older half of this wallet — most likely including the buys — was never read.`,
       );
+    } else if (wholeHistory) {
+      // Ruling the window out is worth as much as naming a cause: it is what
+      // stops somebody raising TRACE_LOOKBACK_DAYS and waiting for nothing.
+      causes.push(
+        `  1. NOT the window. The crawl read every transaction this address has ever signed\n` +
+          `     (${c.transactionsFetched}), so there is no older history to reach and raising\n` +
+          `     TRACE_LOOKBACK_DAYS will not change this answer.`,
+      );
     }
     if (c.foreignSwaps > 0) {
       causes.push(
@@ -326,7 +361,16 @@ const VERDICTS = {
         ? `the engine holds ${c.priceSeries.minutes.toLocaleString('en-US')} minutes and this ` +
           `wallet's trades fall outside them`
         : 'the engine holds no price history at all'
-    }. Check PYTH_BENCHMARKS_URL is reachable from the API host and retry.`,
+    }. Check PYTH_BENCHMARKS_URL is reachable from the API host and retry.` +
+    /* The one variant of this that fixes itself. Benchmarks meters over a
+       window and asks to be left alone for a minute at a time; a trace that
+       stopped waiting on it has not found a feed with no history, it has found
+       a feed that had not answered yet, and the fill carries on behind it. */
+    (c.pricesCutShort === true
+      ? `\nThe series was still filling when the trace's clock ran out, so it stopped waiting\n` +
+        `rather than found nothing — the fill continues in the background. Run this again in\n` +
+        `a minute before changing anything.`
+      : ''),
   no_attribution: () =>
     `Losses found, but every wallet selling into their windows was filtered out.`,
 };

@@ -101,6 +101,7 @@ function scannerFor(
         unpricedSwaps: 0,
         foreignSwaps: 0,
         parseSkips: {},
+        pricesCutShort: false,
         // What the real scanner reports: the window it was budgeted for.
         windowDays: BUDGET.lookbackDays,
         oldestTs: BASE_TS,
@@ -173,6 +174,7 @@ function indexWith(swaps: readonly NormalisedSwap[] | null): IndexedWalletSource
             unpricedSwaps: 0,
             foreignSwaps: 0,
             parseSkips: {},
+            pricesCutShort: false,
             windowDays: 365,
             oldestTs: BASE_TS,
             newestTs: BASE_TS + 3600,
@@ -304,7 +306,18 @@ describe('TraceService', () => {
     expect(report.coverage.excluded['unknown_basis']).toBe(1);
     expect(report.coverage.swapCensus).toEqual({ 'pumpswap:sell': 1 });
     expect(report.notes.join(' ')).toContain('cannot sell what it never bought');
-    expect(report.totals.realisedPnlUsd).toBe(0);
+    /*
+     * And the headline figure has to say the same thing the outcome does.
+     *
+     * This asserted `0` for as long as the code produced it, and the console
+     * printed a flat "$0" under "Realised PnL" beside a heading saying every
+     * figure on the page was void — the sum of an empty selection, wearing the
+     * clothes of a measurement. The position closed and this trace has no idea
+     * at what, which is "—", not "nothing".
+     */
+    expect(report.totals.realisedPnlUsd).toBeNull();
+    expect(report.totals.positionsInTheRed).toBeNull();
+    expect(report.totals.positionsClosed).toBe(1);
   });
 
   it('blames the lookback first when the crawl stopped at the lookback', async () => {
@@ -414,6 +427,25 @@ describe('TraceService', () => {
     const report = await service([], []).trace(VICTIM);
     expect(report.coverage.crawlStoppedAt).toBe('end_of_history');
     expect(report.coverage.historyTruncated).toBe(false);
+  });
+
+  it('rules the window out when the crawl ran out of wallet rather than budget', async () => {
+    /*
+     * The missing arm. Every other stop reason named a cause and this one said
+     * nothing, so a wallet read to its very end came back with a list opening
+     * on two budgets and a bot — none of which can be the answer once every
+     * transaction the address ever signed has been read. Ruling the lookback
+     * out is what stops an operator raising it and waiting for no change.
+     */
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+    const report = await service([sell], [sell], {
+      walletScan: { stoppedAt: 'end_of_history' },
+    }).trace(VICTIM);
+
+    expect(report.status).toBe('unreadable_history');
+    expect(report.notes.join(' ')).toContain('reached the end of this wallet');
+    expect(report.notes.join(' ')).toContain('widening it will not change this answer');
+    expect(report.notes.join(' ')).not.toContain('TRACE_LOOKBACK_DAYS');
   });
 
   it('still reports no_losses when buys were read and nothing lost', async () => {
@@ -609,9 +641,11 @@ describe('TraceService', () => {
     expect(report.status).toBe('unpriced_history');
     expect(report.coverage.swapsUnpriced).toBe(2);
     expect(report.notes.join(' ')).toContain('failure at the SOL/USD feed');
-    // The positions were still read; it is the valuation that is missing.
+    // The positions were still read; it is the valuation that is missing — so
+    // the count stands and the dollar figure does not. A zero here would be the
+    // price outage restated as a wallet that broke exactly even.
     expect(report.totals.positionsClosed).toBe(1);
-    expect(report.totals.realisedPnlUsd).toBe(0);
+    expect(report.totals.realisedPnlUsd).toBeNull();
   });
 
   it('discloses a partial price outage without refusing the trace', async () => {
@@ -958,5 +992,67 @@ describe('TraceService index requests', () => {
     const report = await service([sell], [sell]).trace(VICTIM);
 
     expect(report.coverage.deepReadRequested).toBe(false);
+  });
+
+  it('still says a deep read was needed when there was nowhere to ask for one', async () => {
+    /*
+     * The live console screenshot this exists for: "deep read — not needed",
+     * printed beside "no counterparties · unreadable history". The queue was
+     * switched off, so nothing was requested, so the one row that could have
+     * named the fix said there was nothing to fix. The finding belongs to the
+     * trace and the action belongs to the deployment; conflating them made the
+     * page reassuring on precisely the traces that were not.
+     */
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+
+    const report = await service([sell], [sell]).trace(VICTIM);
+
+    expect(report.status).toBe('unreadable_history');
+    expect(report.coverage.deepReadNeeded).toBe(true);
+    expect(report.coverage.deepReadRequested).toBe(false);
+  });
+
+  it('does not claim a wallet the chain answered properly needs one', async () => {
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 100, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 400, offsetSec: 60 });
+
+    const report = await service([buy, sell], [buy, sell]).trace(VICTIM);
+
+    expect(report.status).toBe('no_losses');
+    expect(report.coverage.deepReadNeeded).toBe(false);
+  });
+
+  it('marks a queued wallet as needing the read it just queued', async () => {
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 60 });
+    const req = requester();
+
+    const report = await serviceWith([sell], req).trace(VICTIM);
+
+    expect(report.coverage.deepReadNeeded).toBe(true);
+    expect(report.coverage.deepReadRequested).toBe(true);
+  });
+});
+
+describe('TraceService price warm-up', () => {
+  it('names the price feed when the warm-up, not the chain, ran out of clock', async () => {
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 100, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 400, offsetSec: 60 });
+
+    const report = await service([buy, sell], [buy, sell], {
+      walletScan: { pricesCutShort: true },
+    }).trace(VICTIM);
+
+    expect(report.coverage.pricesCutShort).toBe(true);
+    expect(report.notes.join(' ')).toContain('SOL/USD price series was still filling');
+  });
+
+  it('says nothing about the price feed when it kept up', async () => {
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 100, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 400, offsetSec: 60 });
+
+    const report = await service([buy, sell], [buy, sell]).trace(VICTIM);
+
+    expect(report.coverage.pricesCutShort).toBe(false);
+    expect(report.notes.join(' ')).not.toContain('still filling');
   });
 });

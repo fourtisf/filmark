@@ -977,6 +977,13 @@ const NO_RESULT={
           ${r.coverage.crawlStoppedAt==="time_budget"?"time":"budget"} before it reached the
           ${r.coverage.lookbackDays}-day mark, so the older half of this wallet — most likely
           including the entries — was never opened.</p>`
+       /* The one stop that rules the window out instead of implicating it, and
+          the one that used to print nothing at all — leaving the reader with a
+          page that named the lookback everywhere else and stayed silent here. */
+       : r.coverage.crawlStoppedAt==="end_of_history"
+       ? `<p style="margin-top:14px">It is not the window. The read reached the end of this
+          address — every transaction it has ever signed — so there is no older history to go
+          back for, and the entries were never on a venue this build reads.</p>`
        : ""}
      ${r.coverage.foreignSwaps>0
        ? `<p style="margin-top:14px">${r.coverage.foreignSwaps}
@@ -994,6 +1001,11 @@ const NO_RESULT={
      given a dollar value. Cost basis is a dollar figure, so with no prices there is no profit and
      no loss to report — and "nothing closed in the red" would be a claim about this wallet caused
      by a failure somewhere else entirely.</p>
+     ${r.coverage.pricesCutShort
+       ? `<p style="margin-top:14px">The series was still filling when this trace ran out of time,
+          so it stopped waiting rather than found nothing — the fill carries on in the background
+          with no browser on it. Tracing this wallet again shortly is likely to price it.</p>`
+       : ""}
      <p style="margin-top:14px">The price feed is Pyth's SOL/USD minute series, which is upstream
      of everything above and nothing to do with the address. ${!r.coverage.priceSeries
        ? "The engine currently holds no price history at all."
@@ -1072,15 +1084,27 @@ function coverageHtml(r){
   /* The window that was read, which is not the window that was asked for the
      moment a budget ends the crawl early. Printing the configured number there
      is a setting wearing the clothes of a measurement — the same fault §7.4
-     forbids in the headline figure, one row further down the page. */
-  const daysRead=c.fromTs&&c.toTs?Math.max(1,Math.round((c.toTs-c.fromTs)/86400)):null;
-  const shortRead=daysRead!==null&&daysRead<c.lookbackDays*0.9;
+     forbids in the headline figure, one row further down the page.
+
+     How deep the read went is measured back from *now*, not across the trades
+     it found. `toTs - fromTs` is the span the wallet was active over, and those
+     are different numbers the moment a wallet has been quiet for a while: one
+     that last traded three weeks ago, read cleanly to the end of its history,
+     came out as "29 days read of 60 asked for" — a truncated crawl invented by
+     the arithmetic, on the one screen somebody reads to find out whether the
+     read can be trusted. `crawlStoppedAt` is what actually knows, so it decides
+     rather than a comparison of two timestamps. */
+  const daysRead=c.fromTs?Math.max(1,Math.round((r.generatedAt-c.fromTs)/86400)):null;
+  const wholeHistory=c.crawlStoppedAt==="end_of_history";
+  const shortRead=!wholeHistory&&daysRead!==null&&daysRead<c.lookbackDays*0.9;
   const facts=[
     /* Which half of the system answered. A trace read from the index costs no
        RPC and covers the whole window; a live one covers as much of it as the
        request had time for. Same figures, different confidence. */
     ["Source",c.source==="index"?"swap index · no chain crawl":"live chain crawl"],
-    ["Window",shortRead
+    ["Window",wholeHistory
+      ? `${c.lookbackDays} day lookback · read to the end of this wallet`
+      : shortRead
       ? `${daysRead} days read of ${c.lookbackDays} asked for`
       : `${c.lookbackDays} day lookback`],
     ["Venues read",c.venues.join(", ")],
@@ -1094,17 +1118,28 @@ function coverageHtml(r){
     ["Realised PnL",signedUsd(t.realisedPnlUsd)],
     ["Scan time",(r.elapsedMs/1000).toFixed(1)+"s"
       +(c.stoppedOnTimeBudget?" · cut short by the clock":"")],
-    // Whether anything is being done about a read that fell short, so the row
-    // sits beside the figures that caused it rather than in a note below.
+    /* Whether anything is being done about a read that fell short, so the row
+       sits beside the figures that caused it rather than in a note below.
+
+       "Not needed" used to cover two cases that could not be further apart: a
+       trace the chain answered properly, and a trace that ran out of road with
+       no index wired up to take it further. The second printed "not needed"
+       beside an outcome saying every figure on the page was void. The engine
+       now reports the finding and the action on it separately, so this can
+       too. */
     ["Deep read",c.deepReadRequested?"queued · retry in a few minutes"
+      :c.deepReadNeeded?"needed · no index is wired up to run one"
       :c.source==="index"?"not needed · answered from the index":"not needed"],
     ["Swaps read",Object.entries(c.swapCensus||{}).map(([k,v])=>`${k} ${v}`).join("  ")||"none"],
     ["Other wallets' swaps",String(c.foreignSwaps??0)],
     // The three below used to be measured and never shown, which is how a
     // pricing outage reached the page dressed as a wallet that never lost
     // money. A figure that decides what the headline says belongs beside it.
+    /* And the reason those two counts may say more about the clock than about
+       the feed: a price series still filling when the trace's time ran out. */
     ["Swaps unpriced",c.swapsUnpriced===undefined?"—"
-      :`${c.swapsUnpriced}${c.poolSwapsUnpriced?` · ${c.poolSwapsUnpriced} in pools`:""}`],
+      :`${c.swapsUnpriced}${c.poolSwapsUnpriced?` · ${c.poolSwapsUnpriced} in pools`:""}`
+      +(c.pricesCutShort?" · price feed cut short by the clock":"")],
     ["Positions excluded",Object.entries(c.excluded||{}).map(([k,v])=>
       `${k.replace(/_/g," ")} ${v}`).join("  ")||"none"],
     ["Parser refusals",Object.entries(c.parseSkips||{}).map(([k,v])=>`${k} ${v}`).join("  ")||"none"],

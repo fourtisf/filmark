@@ -23,7 +23,7 @@ import {
   type Position,
   type PositionBuyLeg,
 } from '@exitliquidity/positions';
-import type { WalletIndexRequester } from './index-request.js';
+import { indexRequestReason, type WalletIndexRequester } from './index-request.js';
 import type { IndexedWalletSource } from './index-source.js';
 import type { TokenMetadataResolver } from './metadata.js';
 import {
@@ -143,7 +143,20 @@ export class TraceService {
    * bounded only by the caller's own timeout — which returns nothing at all.
    */
   async trace(wallet: string, signal?: AbortSignal, deadline?: Deadline): Promise<TraceReport> {
-    const report = await this.#compute(wallet, signal, deadline);
+    const computed = await this.#compute(wallet, signal, deadline);
+
+    /*
+     * Whether a deep read would help is a property of the trace, not of the
+     * deployment — so it is reported even where there is nothing to act on it.
+     * Folding the two together is how a console came to print "deep read: not
+     * needed" beside "unreadable history": the queue was switched off, so
+     * nothing was requested, so the page said nothing was wrong.
+     */
+    const needed = indexRequestReason(computed) !== null;
+    const report: TraceReport = needed
+      ? { ...computed, coverage: { ...computed.coverage, deepReadNeeded: true } }
+      : computed;
+
     if (this.#indexRequests === undefined) return report;
 
     /*
@@ -202,6 +215,20 @@ export class TraceService {
     } else if (scan.truncated) {
       notes.push(
         `Only the most recent ${cost.signaturesRead.toLocaleString('en-US')} transactions were read; this wallet has more history than one trace covers.`,
+      );
+    }
+
+    /*
+     * The upstream that is not the chain.
+     *
+     * Placed before the swap-count guard on purpose: it is the explanation for
+     * a trace that came back slow *and* unpriced, and both of the statuses
+     * below read as findings about the wallet when the real cause was a price
+     * feed asking to be left alone for a minute at a time.
+     */
+    if (scan.pricesCutShort) {
+      notes.push(
+        'The SOL/USD price series was still filling when this trace ran out of clock, so it was priced from the minutes already held rather than waited on. That is a limit of the price feed inside one request, not a fact about this wallet — the fill continues in the background, and tracing it again shortly prices what is missing here.',
       );
     }
 
@@ -553,13 +580,17 @@ export class TraceService {
       foreignSwaps: scan.foreignSwaps,
       swapsUnpriced: scan.unpricedSwaps,
       priceSeries: this.#priceSeries?.() ?? null,
+      pricesCutShort: scan.pricesCutShort,
       parseSkips: scan.parseSkips,
       historyTruncated: scan.truncated,
       crawlStoppedAt: scan.stoppedAt,
       stoppedOnTimeBudget: scan.stoppedOnTime,
       transactionsUnread: scan.transactionsUnread,
-      // Set by `trace` only once a request has actually been recorded.
+      // Both set by `trace`, which is where the whole report is available to
+      // judge against: `deepReadNeeded` once it has, `deepReadRequested` only
+      // once a request has actually been recorded.
       deepReadRequested: false,
+      deepReadNeeded: false,
       tokenSymbolsAvailable: this.#metadata.supported,
       ...measured,
     };
@@ -587,9 +618,6 @@ export class TraceService {
      * nothing closed in the red. Both halves of that were the constant, not the
      * wallet — §7.4, one method below the comment that says so.
      */
-    const closed = positions.filter((position) => position.status === 'closed');
-    const complete = closed.filter((position) => position.basisQuality === 'complete');
-
     return {
       wallet,
       generatedAt: nowSeconds(),
@@ -601,16 +629,9 @@ export class TraceService {
         realisedLossUsd: null,
         counterparties: null,
         largestCounterpartyUsd: null,
-        // These only need a basis, which accounting already produced.
-        realisedPnlUsd:
-          positions.length === 0
-            ? null
-            : complete.reduce((sum, position) => sum + position.realisedPnlUsd, 0),
-        positionsClosed: closed.length,
-        positionsInTheRed:
-          positions.length === 0
-            ? null
-            : complete.filter((position) => position.realisedPnlUsd < 0).length,
+        // These only need a basis, which accounting already produced — where it
+        // could. `realisedTotals` is null where it could not.
+        ...realisedTotals(positions),
       },
       tokens: [],
       counterparties: [],
@@ -636,18 +657,48 @@ function buildTotals(
   merged: AttributionResult,
   counterparties: readonly { attributedUsd: number }[],
 ): TraceTotals {
-  const closed = all.filter((position) => position.status === 'closed');
-  const complete = closed.filter((position) => position.basisQuality === 'complete');
-
   return {
     attributedUsd: merged.attributedUsd,
     unattributedUsd: merged.unattributedUsd,
     realisedLossUsd: analysed.reduce((sum, position) => sum + Math.abs(position.realisedPnlUsd), 0),
-    realisedPnlUsd: complete.reduce((sum, position) => sum + position.realisedPnlUsd, 0),
-    positionsClosed: closed.length,
-    positionsInTheRed: complete.filter((position) => position.realisedPnlUsd < 0).length,
+    ...realisedTotals(all),
     counterparties: counterparties.length,
     largestCounterpartyUsd: counterparties[0]?.attributedUsd ?? 0,
+  };
+}
+
+/**
+ * The realised side of the ledger, and null wherever it was never readable.
+ *
+ * Summing an empty selection gives 0, and 0 is what the console printed under
+ * "Realised PnL" on a trace that had just refused to answer because it could
+ * not find a single entry leg — two closed positions, both `unknown_basis`,
+ * both dropped from this sum, and a flat `$0` presented beside a heading
+ * saying every figure on the page was void. Both halves of that were the
+ * arithmetic, not the wallet.
+ *
+ * A wallet with nothing closed is a different case and stays a measurement:
+ * nothing was realised, and `positionsClosed: 0` says so beside it. What is
+ * unknowable is a wallet that closed positions this trace could read no basis
+ * for — it realised something, and this trace cannot say what.
+ */
+function realisedTotals(positions: readonly Position[]): {
+  realisedPnlUsd: number | null;
+  positionsClosed: number;
+  positionsInTheRed: number | null;
+} {
+  const closed = positions.filter((position) => position.status === 'closed');
+  const complete = closed.filter((position) => position.basisQuality === 'complete');
+  const knowable = positions.length > 0 && (closed.length === 0 || complete.length > 0);
+
+  return {
+    realisedPnlUsd: knowable
+      ? complete.reduce((sum, position) => sum + position.realisedPnlUsd, 0)
+      : null,
+    positionsClosed: closed.length,
+    positionsInTheRed: knowable
+      ? complete.filter((position) => position.realisedPnlUsd < 0).length
+      : null,
   };
 }
 
@@ -811,6 +862,20 @@ function missingBuyLegCauses(scan: WalletScan, reach: CrawlReach): string[] {
     const read = scan.cost.transactionsFetched;
     causes.push(
       `The crawl stopped at its ${reach.maxSignatures.toLocaleString('en-US')}-signature ceiling after reading ${read.toLocaleString('en-US')}, before it reached the ${lookbackDays}-day cutoff, so older history — including, most likely, the buys — was never read. TRACE_MAX_SIGNATURES is the setting, and API_TRACE_TIMEOUT_MS has to be able to afford whatever it is raised to.`,
+    );
+  } else {
+    /*
+     * The crawl ran out of wallet, which rules a cause out rather than in.
+     *
+     * Saying nothing here left the reader with a list that opened on the two
+     * budgets and the bot — none of which can be the answer once every
+     * transaction the address has ever signed has been read. Ruling the window
+     * out is worth as much as naming a cause, and costs one sentence: it is the
+     * difference between an operator widening TRACE_LOOKBACK_DAYS to no effect
+     * and one going straight to where the entries actually were.
+     */
+    causes.push(
+      `The crawl reached the end of this wallet's history — all ${scan.cost.transactionsFetched.toLocaleString('en-US')} ${plural(scan.cost.transactionsFetched, 'transaction it has ever signed was', 'transactions it has ever signed were')} read — so the window is not the explanation and widening it will not change this answer. The entries were never on a venue this build reads.`,
     );
   }
 
