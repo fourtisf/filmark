@@ -76,6 +76,9 @@ fi
 sleep 3
 pm2 describe "$WORKER" | grep -q 'status.*online' ||
   fail "$WORKER is not staying up — pm2 logs $WORKER --lines 50"
+# Survive a reboot. Without this the queue stops draining the next time the box
+# restarts, and the only symptom is wallets quietly never getting faster.
+pm2 save >/dev/null 2>&1 || printf '\033[33m   could not pm2 save — run it by hand\033[0m\n'
 printf '   %s     online\n' "$WORKER"
 
 step "Verifying what is actually live"
