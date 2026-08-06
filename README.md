@@ -112,6 +112,21 @@ worse.
 > trace, which is not JSON and did not come from here; the console names that
 > case separately rather than blaming the engine.
 
+### Deploying
+
+```bash
+scripts/deploy.sh                  # build, publish the console, restart, verify
+scripts/deploy.sh <WALLET>         # the same, then index that wallet and trace it
+```
+
+Nine commands across three systems — the repo, nginx and PM2 — and most of them
+have a way to look like they worked while leaving the site on an older build.
+The script reads the site root and the API url out of the vhost rather than
+guessing (this site's root is `/var/www/html`, which reads like a throwaway
+default and is not), stops on the first thing that is not true, and verifies the
+_contents_ of the live page rather than its API url — the url was already right
+on the build being replaced, so it proves nothing about which build is serving.
+
 ### Answering from the index
 
 A live trace is one `getTransaction` per signature, so a wallet's year is a few
