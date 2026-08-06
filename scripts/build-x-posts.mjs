@@ -201,37 +201,34 @@ const POSTS = {
   'x-post-3.png': post(
     3,
     `
-    <div class="split">
-      <div class="left">
-        <div class="kick">Coverage, not a claim</div>
-        <h1 style="margin-top:30px;font-size:64px">It tells you<br>what it <u>could<br>not read.</u></h1>
-        <p class="sub" style="font-size:25px;max-width:430px;margin-top:26px">Loss no window
-          explained is reported as unattributed &mdash; never folded into the headline. A dash
-          means nothing was measured, and a dash is what you get.</p>
-      </div>
-      <div class="cov">
-        ${COVERAGE_ROWS.map(
-          ([k, v]) =>
-            `<div class="cell"><span class="ck">${k}</span><b class="cv${v.startsWith('—') ? ' dim' : ''}">${v}</b></div>`,
-        ).join('')}
-      </div>
+    <div class="kick" style="margin-top:46px">Coverage, not a claim</div>
+    <h1 style="margin-top:28px;font-size:72px">It tells you what it <u>could not read.</u></h1>
+    <p class="sub" style="font-size:27px;max-width:1240px;margin-top:24px">Loss that no window
+      explained is reported as unattributed &mdash; separately, never folded into the headline.
+      A dash means nothing was measured, and a dash is what you get.</p>
+    <div class="cov">
+      ${COVERAGE_ROWS.map(
+        ([k, v]) =>
+          `<div class="cell"><span class="ck">${k}</span><b class="cv${v.startsWith('—') ? ' dim' : ''}">${v}</b></div>`,
+      ).join('')}
     </div>
     <div class="foot"><span class="dom">fillmark.xyz</span></div>`,
-    /* `flex:1` on the split, `1fr` rows inside it: the grid grows to the
-       footer instead of stopping halfway and leaving a third of the frame
-       empty — which at timeline scale reads as a frame that failed to load. */
-    `.split{margin-top:52px;flex:1;display:flex;gap:64px;align-items:stretch;min-height:0}
-     .left{flex:none;width:490px;display:flex;flex-direction:column}
-     .cov{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;
+    /* The table is the argument on this frame, so it gets the field rather than
+       a column beside a paragraph. Two columns left the headline stopping
+       mid-frame with a third of the canvas empty under it — which at timeline
+       scale reads as an image that failed to load rather than as restraint.
+       `flex:1` with `1fr` rows grows it to the footer at any row count. */
+    `.cov{margin-top:38px;flex:1;min-height:0;display:grid;
+       grid-template-columns:repeat(4,1fr);grid-auto-rows:1fr;
        border-top:1px solid ${LN};border-left:1px solid ${LN}}
-     .cell{border-right:1px solid ${LN};border-bottom:1px solid ${LN};padding:22px 26px;
+     .cell{border-right:1px solid ${LN};border-bottom:1px solid ${LN};padding:20px 24px;
        display:flex;flex-direction:column;justify-content:center}
-     .ck{display:block;font-family:var(--mono);font-size:16px;letter-spacing:.2em;
+     .ck{display:block;font-family:var(--mono);font-size:15px;letter-spacing:.18em;
        text-transform:uppercase;color:#5C636B}
      .cv{display:block;margin-top:14px;font-family:var(--mono);font-size:25px;
        font-weight:400;color:var(--wh)}
      .cv.dim{color:#5C636B}
-     .foot{padding-top:34px}`,
+     .foot{padding-top:32px}`,
   ),
 
   /*

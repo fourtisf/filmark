@@ -295,7 +295,13 @@ footer a:hover{color:var(--wh)}
 
 <nav class="nav">
   <div class="nav-in">
-    <div class="logo"><!--LOGO--><svg class="mark" viewBox="0 0 24 24" aria-hidden="true" shape-rendering="crispEdges"><rect x="6.5" y="5.5" width="3" height="14" fill="#7E858E"/> <rect x="6.5" y="5.5" width="12" height="3" fill="#7E858E"/> <rect x="6.5" y="11" width="8.5" height="3" fill="#E23B2E"/></svg><!--/LOGO-->FILL<i>MARK</i></div>
+    <!-- A link, like the lockup on every other page. This was the one page
+         where it was a plain div — on the theory that the landing page is
+         already `/`, so there was nowhere to go. That is not what a reader
+         expects: the lockup is the way back from anywhere, including from
+         halfway down this page, and a mark that does nothing when clicked
+         reads as a broken site rather than as a deliberate no-op. -->
+    <a class="logo" href="/"><!--LOGO--><svg class="mark" viewBox="0 0 24 24" aria-hidden="true" shape-rendering="crispEdges"><rect x="6.5" y="5.5" width="3" height="14" fill="#7E858E"/> <rect x="6.5" y="5.5" width="12" height="3" fill="#7E858E"/> <rect x="6.5" y="11" width="8.5" height="3" fill="#E23B2E"/></svg><!--/LOGO-->FILL<i>MARK</i></a>
     <div class="nav-l">
       <button id="mbtn" aria-expanded="false" aria-controls="mega">Features<span class="car">▼</span></button>
       <a href="/extractors/" class="desk">Index</a>
