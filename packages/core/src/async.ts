@@ -127,6 +127,16 @@ export class RateLimiter {
   }
 
   /**
+   * Epoch milliseconds the next acquisition would be scheduled for.
+   *
+   * Lets a caller holding several limiters send work to whichever is free
+   * soonest, rather than queueing behind one while another idles.
+   */
+  get availableAt(): number {
+    return Math.max(Date.now(), this.#next);
+  }
+
+  /**
    * `cost` is how many units of the limit this acquisition spends.
    *
    * Providers meter RPC calls, not HTTP requests. A JSON-RPC batch of twenty is

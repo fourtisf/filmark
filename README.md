@@ -112,6 +112,20 @@ worse.
 > trace, which is not JSON and did not come from here; the console names that
 > case separately rather than blaming the engine.
 
+### More than one RPC endpoint
+
+`SOLANA_RPC_URL` takes a comma-separated list, and usually should. A rate limit
+belongs to a key, so two endpoints are two allowances that add up rather than
+compete, and a key that exhausts its monthly credit mid-crawl takes its own
+traffic down instead of the whole service. The client sends each call to
+whichever endpoint can take it soonest, slows one that answers `429`, sets aside
+one that answers `401`, and returns to both when they recover — all of it named
+in the log, none of it in the response body, because the URL carries the key.
+
+Every endpoint has to serve `getSignaturesForAddress` as deep as
+`TRACE_LOOKBACK_DAYS`. A pruning endpoint does not error; it quietly shortens the
+window, which `coverage.crawlStoppedAt` will report as `end_of_history`.
+
 ### Restarting it
 
 A trace holds its socket open for as long as its RPC calls take, which is

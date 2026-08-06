@@ -38,6 +38,96 @@ const rpcFault = (code: number, message: string): Response =>
     headers: { 'content-type': 'application/json' },
   });
 
+describe('SolanaRpcClient endpoint pool', () => {
+  /** Records which host each request went to. */
+  function poolClient(
+    url: string,
+    respond: (host: string, call: number) => Response,
+    options: { maxAttempts?: number } = {},
+  ): { client: SolanaRpcClient; hosts: () => string[] } {
+    const hosts: string[] = [];
+    let call = 0;
+    const client = new SolanaRpcClient({
+      url,
+      maxRequestsPerSecond: 1000,
+      maxAttempts: options.maxAttempts ?? 4,
+      logger: silentLogger,
+      fetchImpl: async (input): Promise<Response> => {
+        call += 1;
+        // Narrowed rather than stringified: a `Request` renders as
+        // "[object Object]", which would record a nonsense host and pass.
+        const target =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const host = new URL(target).host;
+        hosts.push(host);
+        return respond(host, call);
+      },
+    });
+    return { client, hosts: () => hosts };
+  }
+
+  it('takes several endpoints from one comma-separated setting', () => {
+    const { client } = poolClient('https://a.invalid/?k=1, https://b.invalid/?k=2', () => ok(1));
+    expect(client.endpointCount).toBe(2);
+    // Two hosts, and not one character of either key.
+    expect(client.endpoint).toBe('https://a.invalid/, https://b.invalid/');
+    expect(client.endpoint).not.toContain('k=');
+  });
+
+  it('ignores blanks and duplicates rather than pretending they are capacity', () => {
+    const { client } = poolClient('https://a.invalid/, ,https://a.invalid/', () => ok(1));
+    expect(client.endpointCount).toBe(1);
+  });
+
+  it('spreads work across the pool instead of queueing on one key', async () => {
+    const { client, hosts } = poolClient('https://a.invalid/,https://b.invalid/', () => ok(1));
+
+    for (let i = 0; i < 6; i += 1) await client.getSlot();
+
+    // A limit belongs to a key, so two keys are two allowances. Both must be
+    // used, or the second one is decoration.
+    expect(new Set(hosts()).size).toBe(2);
+  });
+
+  it('moves off an endpoint that refuses, and keeps answering', async () => {
+    /*
+     * The failure this exists for. One provider's monthly credit ran out
+     * mid-session and every trace died with it, because there was nowhere else
+     * to ask. A refusal should cost the traffic to that key and nothing more.
+     */
+    const { client, hosts } = poolClient('https://dead.invalid/,https://live.invalid/', (host) =>
+      host === 'dead.invalid' ? new Response('no credits', { status: 429 }) : ok(42),
+    );
+
+    for (let i = 0; i < 5; i += 1) await expect(client.getSlot()).resolves.toBe(42);
+
+    // Every call is answered, and each one is answered by the live key exactly
+    // once. The dead key is still tried occasionally — a cooldown that never
+    // expired would be a pool that shrinks permanently on one bad minute — but
+    // it carries a minority of the traffic and none of the answers.
+    const dead = hosts().filter((host) => host === 'dead.invalid').length;
+    const live = hosts().filter((host) => host === 'live.invalid').length;
+    expect(live).toBe(5);
+    expect(dead).toBeLessThan(live);
+  });
+
+  it('sets a rejected credential aside for longer than a busy moment', async () => {
+    const { client, hosts } = poolClient(
+      'https://revoked.invalid/,https://live.invalid/',
+      (host) => (host === 'revoked.invalid' ? new Response('nope', { status: 401 }) : ok(7)),
+    );
+
+    await expect(client.getSlot()).resolves.toBe(7);
+    for (let i = 0; i < 10; i += 1) await client.getSlot();
+
+    expect(hosts().filter((host) => host === 'revoked.invalid')).toHaveLength(1);
+  });
+
+  it('refuses to be constructed with no endpoint at all', () => {
+    expect(() => new SolanaRpcClient({ url: ' , ', logger: silentLogger })).toThrow(RangeError);
+  });
+});
+
 describe('SolanaRpcClient endpoint', () => {
   it('reports where it is pointed without leaking the API key', () => {
     // Every provider puts the key in the query string. This value is logged on
