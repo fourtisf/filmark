@@ -187,7 +187,23 @@ export class SolanaRpcClient {
    * between windows rather than between batches.
    */
   get transactionWindowSize(): number {
-    return this.#batchSize * TRANSACTION_BATCH_CONCURRENCY;
+    return this.#batchSize * this.#concurrency();
+  }
+
+  /**
+   * Batches to keep in flight, which is not always the same question as rate.
+   *
+   * Providers meter more than one thing. Some cap requests per second, some cap
+   * how many may be open at once, and a plan that refuses a fourth connection
+   * refuses it however patiently the client spaced the first three. Backing the
+   * *rate* off does nothing there: a live endpoint was slowed from ten calls a
+   * second to under one and refused every step of the way, which no per-second
+   * limit does. Serial is the shape that was working before the overlap was
+   * added, so a throttled client returns to it rather than continuing to insist
+   * on the concurrency that may be what is being refused.
+   */
+  #concurrency(): number {
+    return this.#limiter.throttled ? 1 : TRANSACTION_BATCH_CONCURRENCY;
   }
 
   /**
@@ -245,7 +261,7 @@ export class SolanaRpcClient {
     const groups = chunk([...signatures], this.#batchSize);
     const pages = await mapWithConcurrency(
       groups,
-      Math.max(1, Math.min(TRANSACTION_BATCH_CONCURRENCY, groups.length)),
+      Math.max(1, Math.min(this.#concurrency(), groups.length)),
       (group) => this.#transactionBatch(group, signal),
       signal,
     );
@@ -412,8 +428,13 @@ export class SolanaRpcClient {
              */
             if (response.status === 429 && this.#limiter.backOff()) {
               this.#logger.warn(
-                { method, attempt, rate: Number(this.#limiter.effectiveRate.toFixed(2)) },
-                'rate limited; slowing to below the configured rate. If this persists, SOLANA_RPC_MAX_RPS is above what the plan allows',
+                {
+                  method,
+                  attempt,
+                  rate: Number(this.#limiter.effectiveRate.toFixed(2)),
+                  batchesInFlight: this.#concurrency(),
+                },
+                'rate limited; slowing down and going serial. If this keeps happening all the way down, it is not a per-second limit — check the plan for a credit or connection quota',
               );
             }
             // 5xx is the other shape a provider hiccup takes. The body is where

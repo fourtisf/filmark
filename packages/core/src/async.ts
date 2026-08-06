@@ -121,6 +121,11 @@ export class RateLimiter {
     return 1000 / (this.#intervalMs * this.#factor);
   }
 
+  /** True while the far end has pushed the rate below what was configured. */
+  get throttled(): boolean {
+    return this.#factor > 1;
+  }
+
   /**
    * `cost` is how many units of the limit this acquisition spends.
    *

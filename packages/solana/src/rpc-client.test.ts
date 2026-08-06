@@ -223,6 +223,49 @@ describe('SolanaRpcClient batching', () => {
     expect(client.transactionWindowSize % client.transactionBatchSize).toBe(0);
   });
 
+  it('goes serial once the endpoint starts refusing, not just slower', async () => {
+    /*
+     * Providers meter more than one thing. A plan that caps open connections
+     * refuses a fourth however patiently the client spaced the first three, and
+     * backing the rate off does nothing about it — a live endpoint was slowed
+     * from ten calls a second to under one and refused every step down, which
+     * no per-second limit does. Serial is the shape that worked before the
+     * overlap existed, so a refused client returns to it.
+     */
+    let refuse = true;
+    let peak = 0;
+    let inFlight = 0;
+    const client = new SolanaRpcClient({
+      url: 'https://rpc.invalid',
+      maxRequestsPerSecond: 500,
+      batchSize: 2,
+      maxAttempts: 6,
+      logger: silentLogger,
+      fetchImpl: async (_url, init): Promise<Response> => {
+        if (refuse) {
+          refuse = false;
+          return new Response('slow down', { status: 429 });
+        }
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return batchOk(JSON.parse((init?.body ?? '[]') as string) as { id: number }[]);
+      },
+    });
+
+    expect(client.transactionWindowSize).toBe(6);
+    await client.getTransactions(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+
+    // One refusal narrows the window to a single batch. The call already in
+    // progress keeps the runners it started with; the next one does not.
+    expect(client.transactionWindowSize).toBe(2);
+
+    peak = 0;
+    await client.getTransactions(['i', 'j', 'k', 'l']);
+    expect(peak).toBe(1);
+  });
+
   it('overlaps batches instead of waiting out every round trip', async () => {
     /*
      * Run end to end, the achieved rate is whichever is slower: the configured
