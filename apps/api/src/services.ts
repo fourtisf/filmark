@@ -1,7 +1,14 @@
 import { createLogger, requireRpcUrl, type Config, type Logger } from '@exitliquidity/core';
+import {
+  SwapRepository,
+  WalletCoverageRepository,
+  clickHouseOptionsFromConfig,
+  createClickHouseClient,
+} from '@exitliquidity/clickhouse';
 import { PythClient } from '@exitliquidity/pricing';
 import { SolanaRpcClient } from '@exitliquidity/solana';
 import { ResultCache, Semaphore } from './cache.js';
+import { ClickHouseWalletSource } from './index-source.js';
 import { createApiMetrics, type ApiMetrics } from './metrics.js';
 import { TokenMetadataResolver } from './metadata.js';
 import { SolUsdCache } from './prices.js';
@@ -17,6 +24,8 @@ export interface ApiServices {
   readonly metrics: ApiMetrics;
   /** Exposed so startup can prove the feed answers before a trace needs it. */
   readonly prices: SolUsdCache;
+  /** True when a swap index is wired in and may answer instead of the chain. */
+  readonly indexed: boolean;
   readonly rpcEndpoint: string;
   readonly corsOrigins: readonly string[];
 }
@@ -71,6 +80,26 @@ export function createServices(config: Config): ApiServices {
     logger,
   });
 
+  /*
+   * The index, when it is there.
+   *
+   * Constructed rather than required: an API pointed at a ClickHouse that does
+   * not exist would fail on a dependency the live path never needed, so this is
+   * opt-in and the crawl remains the floor. `ClickHouseWalletSource` refuses to
+   * answer for a wallet no backfill has covered, so switching it on cannot make
+   * a trace narrower — only cheaper.
+   */
+  const index = config.API_USE_INDEX
+    ? (() => {
+        const clickhouse = createClickHouseClient(clickHouseOptionsFromConfig(config));
+        return new ClickHouseWalletSource({
+          swaps: new SwapRepository(clickhouse),
+          coverage: new WalletCoverageRepository(clickhouse),
+          logger,
+        });
+      })()
+    : undefined;
+
   const traces = new TraceService({
     scanner,
     metadata: new TokenMetadataResolver({ rpc, logger }),
@@ -81,6 +110,7 @@ export function createServices(config: Config): ApiServices {
     },
     // Read per trace, not captured: the series grows as traces warm it.
     priceSeries: () => prices.seriesRange,
+    ...(index === undefined ? {} : { index }),
     logger,
   });
 
@@ -94,6 +124,7 @@ export function createServices(config: Config): ApiServices {
     semaphore: new Semaphore({ limit: config.API_MAX_CONCURRENT_TRACES }),
     metrics: createApiMetrics(),
     prices,
+    indexed: index !== undefined,
     rpcEndpoint: rpc.endpoint,
     corsOrigins: parseOrigins(config.API_CORS_ORIGINS),
   };

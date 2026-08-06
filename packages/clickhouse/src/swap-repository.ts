@@ -59,6 +59,41 @@ export function toSwapRow(swap: NormalisedSwap): SwapRow {
   };
 }
 
+/**
+ * A row on the way back out, with `block_time` already unix seconds.
+ *
+ * Distinct from `SwapRow`, which is the write shape: the reader asks ClickHouse
+ * for the timestamp as a number rather than parsing its text form back, and
+ * `u64` columns still travel as strings because a JSON number is a double.
+ */
+interface StoredSwapRow extends Omit<SwapRow, 'block_time'> {
+  block_time: number;
+}
+
+function fromStoredSwapRow(row: StoredSwapRow): NormalisedSwap {
+  return {
+    signature: row.signature,
+    slot: BigInt(row.slot),
+    blockTime: row.block_time,
+    venue: row.venue as Venue,
+    poolId: row.pool_id,
+    mint: row.mint,
+    wallet: row.wallet,
+    side: row.side === 'buy' ? 'buy' : 'sell',
+    baseAmount: BigInt(row.base_amount),
+    baseDecimals: row.base_decimals,
+    quoteAmount: BigInt(row.quote_amount),
+    quoteFeeAmount: row.quote_fee_amount === null ? null : BigInt(row.quote_fee_amount),
+    quoteMint: row.quote_mint,
+    quoteDecimals: row.quote_decimals,
+    usdValue: row.usd_value,
+    usdPriceSource: row.usd_price_source as NormalisedSwap['usdPriceSource'],
+    ixIndex: row.ix_index,
+    innerIxIndex: row.inner_ix_index,
+    ingestSource: row.ingest_source as NormalisedSwap['ingestSource'],
+  };
+}
+
 export interface SwapCountFilter {
   readonly mint: string;
   /** Inclusive lower bound, unix seconds. */
@@ -202,6 +237,48 @@ export class SwapRepository {
       firstBlockTime: swaps === 0 ? null : (totals?.first_block_time ?? null),
       lastBlockTime: swaps === 0 ? null : (totals?.last_block_time ?? null),
     };
+  }
+
+  /**
+   * Every swap one wallet made in a window, in execution order.
+   *
+   * `LIMIT 1 BY` the sort key rather than `FINAL`: a re-backfill writes the same
+   * swap again, and `ReplacingMergeTree` only collapses duplicates when parts
+   * merge — so a plain read would hand FIFO accounting the same buy twice and
+   * open a lot that never existed. `FINAL` would also do it, at the cost of
+   * merging the whole table on every trace.
+   *
+   * Ordered by slot then instruction index, which is what `accountPositions`
+   * needs and what block time cannot give: block time is a one-second estimate
+   * over blocks that arrive faster than that, and sorting by it can put a sell
+   * ahead of the buy that funded it.
+   */
+  async walletSwaps(wallet: string, fromSec: number, toSec: number): Promise<NormalisedSwap[]> {
+    const result = await this.client.query({
+      query: `
+        SELECT
+          mint, toString(slot) AS slot, toUnixTimestamp(block_time) AS block_time,
+          signature, ix_index, inner_ix_index, venue, pool_id, wallet, side,
+          toString(base_amount) AS base_amount, base_decimals,
+          toString(quote_amount) AS quote_amount,
+          multiIf(quote_fee_amount IS NULL, NULL, toString(quote_fee_amount)) AS quote_fee_amount,
+          quote_mint, quote_decimals, usd_value, usd_price_source, ingest_source
+        FROM swaps
+        WHERE wallet = {wallet:String}
+          AND block_time >= {from:DateTime}
+          AND block_time <= {to:DateTime}
+        ORDER BY slot, ix_index, inner_ix_index, signature
+        LIMIT 1 BY mint, slot, signature, ix_index, inner_ix_index
+      `,
+      query_params: {
+        wallet,
+        from: toClickHouseDateTime(fromSec),
+        to: toClickHouseDateTime(toSec),
+      },
+      format: 'JSONEachRow',
+    });
+
+    return (await result.json<StoredSwapRow>()).map(fromStoredSwapRow);
   }
 
   /** Skip reasons in a window, so a count shortfall has somewhere to start. */

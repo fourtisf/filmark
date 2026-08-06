@@ -6,12 +6,27 @@
     "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo"
   },
   "references": [
-    { "path": "../../packages/core" },
-    { "path": "../../packages/solana" },
-    { "path": "../../packages/parsers" },
-    { "path": "../../packages/pricing" },
-    { "path": "../../packages/positions" },
-    { "path": "../../packages/attribution" }
+    {
+      "path": "../../packages/core"
+    },
+    {
+      "path": "../../packages/clickhouse"
+    },
+    {
+      "path": "../../packages/solana"
+    },
+    {
+      "path": "../../packages/parsers"
+    },
+    {
+      "path": "../../packages/pricing"
+    },
+    {
+      "path": "../../packages/positions"
+    },
+    {
+      "path": "../../packages/attribution"
+    }
   ],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]

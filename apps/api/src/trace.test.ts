@@ -9,6 +9,7 @@ import {
   type PoolScan,
   type WalletScan,
 } from './scan.js';
+import type { IndexedWalletSource } from './index-source.js';
 import { TraceService } from './trace.js';
 
 const VICTIM = 'V1ct1mAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -145,13 +146,39 @@ function service(
   pool: readonly NormalisedSwap[],
   overrides: ScanOverrides = {},
   priceSeries?: () => { fromTs: number; toTs: number; minutes: number } | null,
+  index?: IndexedWalletSource,
 ): TraceService {
   return new TraceService({
     scanner: scannerFor(wallet, pool, overrides),
     metadata: NO_METADATA,
     limits: { lookbackDays: 90, maxPositions: 12, maxLegsPerPosition: 6 },
     ...(priceSeries === undefined ? {} : { priceSeries }),
+    ...(index === undefined ? {} : { index }),
   });
+}
+
+/** An index that answers for one wallet and refuses for everything else. */
+function indexWith(swaps: readonly NormalisedSwap[] | null): IndexedWalletSource {
+  return {
+    read: async (wallet) =>
+      swaps === null
+        ? null
+        : {
+            wallet,
+            swaps,
+            census: censusOf(swaps),
+            unpricedSwaps: 0,
+            foreignSwaps: 0,
+            parseSkips: {},
+            oldestTs: BASE_TS,
+            newestTs: BASE_TS + 3600,
+            truncated: false,
+            stoppedAt: 'lookback_cutoff' as const,
+            stoppedOnTime: false,
+            transactionsUnread: 0,
+            cost: { signaturesRead: 0, transactionsFetched: 0 },
+          },
+  };
 }
 
 describe('TraceService', () => {
@@ -623,6 +650,62 @@ describe('TraceService', () => {
     expect(walletDeadline).toBeDefined();
     expect(walletDeadline as number).toBeLessThan(at);
     expect(poolDeadline).toBe(at);
+  });
+
+  it('answers from the index without spending a single RPC call', async () => {
+    /*
+     * The whole reason the index exists. A live crawl is one `getTransaction`
+     * per signature, and a wallet's year is thousands of them against a
+     * per-second allowance — no arrangement of that fits in a web request. The
+     * figures must come out identical; only what they cost changes.
+     */
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 500, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 300 });
+    const pool = [
+      buy,
+      sell,
+      makeSwap({ wallet: 'x', side: 'sell', base: 500, usd: 500, offsetSec: 1 }),
+    ];
+
+    // The scanner is handed nothing, so anything found came from the index.
+    const report = await service([], pool, {}, undefined, indexWith([buy, sell])).trace(VICTIM);
+
+    expect(report.coverage.source).toBe('index');
+    expect(report.status).toBe('ok');
+    expect(report.totals.realisedLossUsd).toBeCloseTo(400, 4);
+    expect(report.notes.join(' ')).toContain('Answered from the swap index');
+  });
+
+  it('falls back to the chain when the index cannot cover the wallet', async () => {
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 500, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 300 });
+
+    // An index that refuses must be silent, not fatal: the chain is still there.
+    const report = await service([buy, sell], [buy, sell], {}, undefined, indexWith(null)).trace(
+      VICTIM,
+    );
+
+    expect(report.coverage.source).toBe('live');
+    expect(report.totals.positionsClosed).toBe(1);
+    expect(report.notes.join(' ')).not.toContain('Answered from the swap index');
+  });
+
+  it('reports a live source when no index is wired in at all', async () => {
+    const report = await service([], []).trace(VICTIM);
+    expect(report.coverage.source).toBe('live');
+  });
+
+  it('does not let a broken index take the trace down with it', async () => {
+    const buy = makeSwap({ wallet: VICTIM, side: 'buy', base: 100, usd: 500, offsetSec: 0 });
+    const sell = makeSwap({ wallet: VICTIM, side: 'sell', base: 100, usd: 100, offsetSec: 300 });
+    const exploding: IndexedWalletSource = {
+      read: () => Promise.reject(new Error('clickhouse is down')),
+    };
+
+    const report = await service([buy, sell], [buy, sell], {}, undefined, exploding).trace(VICTIM);
+
+    expect(report.coverage.source).toBe('live');
+    expect(report.totals.positionsClosed).toBe(1);
   });
 
   it('counts unpriced pool swaps against the windows they weakened', async () => {

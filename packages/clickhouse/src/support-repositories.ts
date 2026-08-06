@@ -44,6 +44,92 @@ export class CheckpointRepository {
   }
 }
 
+/** What a backfill covered for one wallet. */
+export interface WalletCoverage {
+  readonly wallet: string;
+  /** Unix seconds. The window the backfill was asked for and reached. */
+  readonly fromTs: number;
+  readonly toTs: number;
+  readonly swaps: number;
+  /** False when the crawl ran with no usable price series behind it. */
+  readonly pricesReady: boolean;
+  readonly updatedAt: number;
+}
+
+/**
+ * Which wallets the index can answer for, and over what window.
+ *
+ * `swaps` alone cannot answer that: a wallet with no rows is either one that
+ * never traded on a parsed venue or one nobody has backfilled, and serving the
+ * first answer for the second case is a fabricated finding. A reader consults
+ * this first and goes to the chain when the window it wants is not covered.
+ */
+export class WalletCoverageRepository {
+  constructor(private readonly client: ClickHouseClient) {}
+
+  async get(wallet: string): Promise<WalletCoverage | null> {
+    const result = await this.client.query({
+      // FINAL: a re-backfill supersedes the previous row, and reading the older
+      // one would claim a narrower window than the index actually holds.
+      query: `
+        SELECT
+          wallet,
+          toUnixTimestamp(from_ts)    AS from_ts,
+          toUnixTimestamp(to_ts)      AS to_ts,
+          swaps,
+          prices_ready,
+          toUnixTimestamp(updated_at) AS updated_at
+        FROM wallet_coverage FINAL
+        WHERE wallet = {wallet:String}
+      `,
+      query_params: { wallet },
+      format: 'JSONEachRow',
+    });
+
+    const [row] = await result.json<{
+      wallet: string;
+      from_ts: number;
+      to_ts: number;
+      swaps: string | number;
+      prices_ready: number;
+      updated_at: number;
+    }>();
+    if (row === undefined) return null;
+
+    return {
+      wallet: row.wallet,
+      fromTs: row.from_ts,
+      toTs: row.to_ts,
+      swaps: Number(row.swaps),
+      pricesReady: row.prices_ready === 1,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async record(coverage: Omit<WalletCoverage, 'updatedAt'>): Promise<void> {
+    try {
+      await this.client.insert({
+        table: 'wallet_coverage',
+        values: [
+          {
+            wallet: coverage.wallet,
+            from_ts: toClickHouseDateTime(coverage.fromTs),
+            to_ts: toClickHouseDateTime(coverage.toTs),
+            swaps: coverage.swaps,
+            prices_ready: coverage.pricesReady ? 1 : 0,
+          },
+        ],
+        format: 'JSONEachRow',
+      });
+    } catch (error) {
+      throw new StorageError(`failed to record coverage for ${coverage.wallet}`, {
+        cause: error,
+        context: { wallet: coverage.wallet },
+      });
+    }
+  }
+}
+
 /** The SOL/USD minute series backing quote-leg pricing. */
 export class SolUsdRepository {
   constructor(private readonly client: ClickHouseClient) {}

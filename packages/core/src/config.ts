@@ -103,6 +103,15 @@ const configSchema = z.object({
   API_MAX_CONCURRENT_TRACES: positiveInt.default(2),
   /** Upper bound on a single trace, after which it fails rather than hangs. */
   API_TRACE_TIMEOUT_MS: positiveInt.default(180_000),
+  /**
+   * Serve a trace from the swap index when a backfill has covered the wallet.
+   *
+   * Off by default: an API pointed at a ClickHouse that is not there would fail
+   * on a dependency the live path never needed. On, a wallet somebody has
+   * backfilled is answered in a query instead of a few thousand RPC calls, and
+   * `coverage.source` says which happened.
+   */
+  API_USE_INDEX: booleanish.default(false),
 
   /**
    * How far back a trace reads a wallet's history. Spec §8 assumes 90 days.

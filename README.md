@@ -112,6 +112,28 @@ worse.
 > trace, which is not JSON and did not come from here; the console names that
 > case separately rather than blaming the engine.
 
+### Answering from the index
+
+A live trace is one `getTransaction` per signature, so a wallet's year is a few
+thousand RPC calls against a per-second allowance — no arrangement of the crawl
+makes that a web request, and `coverage.stoppedOnTimeBudget` is what a wallet too
+deep for one looks like. The same work done once, by a backfill nobody is waiting
+on, is a query:
+
+```bash
+pnpm migrate                                                    # ClickHouse schema
+pnpm --filter @exitliquidity/ingest exec tsx src/cli.ts \
+  backfill <WALLET> --days 365                                  # minutes, no browser waiting
+API_USE_INDEX=true                                              # then restart the API
+```
+
+A backfill records the window it covered in `wallet_coverage`, and the API reads
+that before it reads the rows — `swaps` alone cannot tell a wallet that never
+traded from one nobody has indexed, and serving the first answer for the second
+is a fabricated finding. A wallet with no coverage row, or whose coverage is
+narrower or staler than the request, falls through to the live crawl silently.
+`coverage.source` says which of the two answered, every time.
+
 ### More than one RPC endpoint
 
 `SOLANA_RPC_URL` takes a comma-separated list, and usually should. A rate limit

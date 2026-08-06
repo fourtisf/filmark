@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@exitliquidity/attribution": "workspace:*",
+    "@exitliquidity/clickhouse": "workspace:*",
     "@exitliquidity/core": "workspace:*",
     "@exitliquidity/parsers": "workspace:*",
     "@exitliquidity/positions": "workspace:*",

@@ -13,6 +13,7 @@ import {
   MintRepository,
   SolUsdRepository,
   SwapRepository,
+  WalletCoverageRepository,
   clickHouseOptionsFromConfig,
   createClickHouseClient,
   type ClickHouseClient,
@@ -40,6 +41,7 @@ export interface Services {
   readonly checkpoints: CheckpointRepository;
   readonly mints: MintRepository;
   readonly solUsd: SolUsdRepository;
+  readonly walletCoverage: WalletCoverageRepository;
   readonly series: SolUsdSeries;
   readonly pyth: PythClient;
   readonly prices: PriceService;
@@ -67,6 +69,7 @@ export function createServices(options: CreateServicesOptions = {}): Services {
   const clickhouse = createClickHouseClient(clickHouseOptionsFromConfig(config));
   const swaps = new SwapRepository(clickhouse);
   const checkpoints = new CheckpointRepository(clickhouse);
+  const walletCoverage = new WalletCoverageRepository(clickhouse);
   const mints = new MintRepository(clickhouse);
   const solUsd = new SolUsdRepository(clickhouse);
 
@@ -124,6 +127,7 @@ export function createServices(options: CreateServicesOptions = {}): Services {
     checkpoints,
     mints,
     solUsd,
+    walletCoverage,
     series,
     pyth,
     prices,

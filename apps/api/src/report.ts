@@ -42,6 +42,17 @@ export type TraceStatus =
   /** Losses, but no window produced an eligible counterparty. */
   | 'no_attribution';
 
+/**
+ * Which half of the system answered.
+ *
+ * `live` crawled the chain on this request, bounded by the clock and by an RPC
+ * allowance. `index` read swaps a backfill had already written, which costs no
+ * RPC and covers the whole window rather than as much of it as a request had
+ * time for. The figures mean the same thing either way; what they cost, and how
+ * complete they are, does not — so the reader is told.
+ */
+export type TraceSource = 'live' | 'index';
+
 export interface TraceWindowRef {
   readonly mint: string;
   readonly symbol: string | null;
@@ -91,6 +102,8 @@ export interface TraceTotals {
 }
 
 export interface TraceCoverage {
+  /** Whether the chain was crawled for this trace, or the index read. */
+  readonly source: TraceSource;
   readonly lookbackDays: number;
   /** Venues with a parser. Anything traded elsewhere is invisible to this. */
   readonly venues: readonly string[];

@@ -1042,6 +1042,10 @@ function coverageHtml(r){
   const daysRead=c.fromTs&&c.toTs?Math.max(1,Math.round((c.toTs-c.fromTs)/86400)):null;
   const shortRead=daysRead!==null&&daysRead<c.lookbackDays*0.9;
   const facts=[
+    /* Which half of the system answered. A trace read from the index costs no
+       RPC and covers the whole window; a live one covers as much of it as the
+       request had time for. Same figures, different confidence. */
+    ["Source",c.source==="index"?"swap index · no chain crawl":"live chain crawl"],
     ["Window",shortRead
       ? `${daysRead} days read of ${c.lookbackDays} asked for`
       : `${c.lookbackDays} day lookback`],

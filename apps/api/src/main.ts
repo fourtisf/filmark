@@ -50,6 +50,7 @@ async function main(): Promise<number> {
       // the query string, so the full URL never reaches a log line.
       rpc: services.rpcEndpoint,
       lookbackDays: config.TRACE_LOOKBACK_DAYS,
+      index: services.indexed ? 'on' : 'off',
       cors: services.corsOrigins.length === 0 ? 'none' : services.corsOrigins.join(','),
     },
     'trace API listening',

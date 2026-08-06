@@ -23,6 +23,7 @@ import {
   type Position,
   type PositionBuyLeg,
 } from '@exitliquidity/positions';
+import type { IndexedWalletSource } from './index-source.js';
 import type { TokenMetadataResolver } from './metadata.js';
 import {
   newPoolCrawlBudget,
@@ -35,6 +36,7 @@ import type {
   TraceCoverage,
   TraceCounterparty,
   TraceReport,
+  TraceSource,
   TraceStatus,
   TraceToken,
   TraceTotals,
@@ -67,6 +69,15 @@ export interface TraceServiceOptions {
    * forever.
    */
   readonly priceSeries?: () => { fromTs: number; toTs: number; minutes: number } | null;
+  /**
+   * Consulted before the chain is.
+   *
+   * A live crawl is one `getTransaction` per signature and a wallet's year is
+   * thousands of them; no arrangement of that is a web request. When the index
+   * has been backfilled for a wallet it answers in a query instead, and the
+   * report says which of the two did.
+   */
+  readonly index?: IndexedWalletSource;
   readonly logger?: Logger;
 }
 
@@ -101,6 +112,7 @@ export class TraceService {
   readonly #limits: TraceLimits;
   readonly #netting: NettingOptions;
   readonly #priceSeries: TraceServiceOptions['priceSeries'];
+  readonly #index: IndexedWalletSource | undefined;
   readonly #logger: Logger;
 
   constructor(options: TraceServiceOptions) {
@@ -109,6 +121,7 @@ export class TraceService {
     this.#limits = options.limits;
     this.#netting = options.netting ?? {};
     this.#priceSeries = options.priceSeries;
+    this.#index = options.index;
     this.#logger = options.logger ?? silentLogger;
   }
 
@@ -124,10 +137,26 @@ export class TraceService {
         ? undefined
         : startedAt + Math.max(0, deadline - startedAt) * WALLET_SCAN_TIME_SHARE;
 
-    const scan = await this.#scanner.scanWallet(wallet, signal, walletDeadline);
+    /*
+     * The index first, the chain second.
+     *
+     * `read` returns null unless a backfill has recorded that it covers this
+     * wallet over this window — an index that quietly serves a narrower window
+     * than it was asked for is worse than no index, so the fallback is silent
+     * and the source is reported either way.
+     */
+    const indexed = await this.#index?.read(wallet, this.#limits.lookbackDays).catch(() => null);
+    const scan = indexed ?? (await this.#scanner.scanWallet(wallet, signal, walletDeadline));
+    const source: TraceSource = indexed === null || indexed === undefined ? 'live' : 'index';
 
     const cost = { ...scan.cost };
     const notes: string[] = [];
+
+    if (source === 'index') {
+      notes.push(
+        `Answered from the swap index rather than by crawling the chain, so this trace spent no RPC and covers the whole ${this.#limits.lookbackDays}-day window rather than as much of it as a request had time for.`,
+      );
+    }
 
     if (scan.stoppedOnTime) {
       notes.push(
@@ -140,7 +169,7 @@ export class TraceService {
     }
 
     if (scan.swaps.length === 0) {
-      return this.#empty(wallet, 'no_swaps', scan, cost, startedAt, notes, 0);
+      return this.#empty(source, wallet, 'no_swaps', scan, cost, startedAt, notes, 0);
     }
 
     if (scan.unpricedSwaps > 0 && scan.unpricedSwaps < scan.swaps.length) {
@@ -186,6 +215,7 @@ export class TraceService {
         }),
       );
       return this.#empty(
+        source,
         wallet,
         'unreadable_history',
         scan,
@@ -213,6 +243,7 @@ export class TraceService {
         `All ${scan.swaps.length} ${plural(scan.swaps.length, 'swap', 'swaps')} read for this wallet came back with no USD price, so there is no cost basis to compute a profit or loss from. That is a failure at the SOL/USD feed, not a finding about the wallet: nothing is reported rather than a figure derived from a basis of zero. Retrying in a few minutes is the right response.`,
       );
       return this.#empty(
+        source,
         wallet,
         'unpriced_history',
         scan,
@@ -230,6 +261,7 @@ export class TraceService {
 
     if (losing.length === 0) {
       return this.#empty(
+        source,
         wallet,
         'no_losses',
         scan,
@@ -333,7 +365,7 @@ export class TraceService {
       totals,
       tokens: buildTokens(analysed, merged, symbols),
       counterparties: counterparties.map((entry) => toCounterparty(entry, symbols)),
-      coverage: this.#coverage(scan, cost, {
+      coverage: this.#coverage(source, scan, cost, {
         losingPositions: losing.length,
         poolsIncomplete,
         excluded,
@@ -401,6 +433,7 @@ export class TraceService {
    * that only mean something once attribution runs are null until it does.
    */
   #coverage(
+    source: TraceSource,
     scan: WalletScan,
     cost: { signaturesRead: number; transactionsFetched: number },
     measured: {
@@ -414,6 +447,7 @@ export class TraceService {
     },
   ): TraceCoverage {
     return {
+      source,
       lookbackDays: this.#limits.lookbackDays,
       venues: PARSED_VENUES,
       fromTs: scan.oldestTs,
@@ -436,6 +470,7 @@ export class TraceService {
 
   /** A trace that stopped before it had anything to attribute. */
   #empty(
+    source: TraceSource,
     wallet: string,
     status: TraceStatus,
     scan: WalletScan,
@@ -461,7 +496,7 @@ export class TraceService {
       },
       tokens: [],
       counterparties: [],
-      coverage: this.#coverage(scan, cost, {
+      coverage: this.#coverage(source, scan, cost, {
         losingPositions: 0,
         poolsIncomplete: 0,
         excluded,

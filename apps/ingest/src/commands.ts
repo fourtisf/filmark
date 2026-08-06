@@ -148,6 +148,26 @@ export async function backfill(
 
   const result = await runner.run({ ...options, fromSec }, controller.signal);
   await services.writer.flush();
+
+  /*
+   * Record what this run covered, so a reader can tell empty from unread.
+   *
+   * Written after the flush, and only when the crawl reached the cutoff it was
+   * asked for: a run cut short covers less than its window claims, and a
+   * coverage row is a promise that the index can answer for this wallet over
+   * this range. A wallet with zero swaps still gets a row — that is a real
+   * answer, and the whole point is to stop it looking like an unread one.
+   */
+  if (result.reachedCutoff) {
+    await services.walletCoverage.record({
+      wallet: options.address,
+      fromTs: fromSec,
+      toTs: nowSeconds(),
+      swaps: result.swapsWritten,
+      pricesReady,
+    });
+  }
+
   return { ...result, pricesReady };
 }
 

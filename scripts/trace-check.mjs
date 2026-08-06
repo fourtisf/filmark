@@ -171,6 +171,10 @@ const daysRead = c.fromTs && c.toTs ? Math.max(1, Math.round((c.toTs - c.fromTs)
 stdout.write(`\n${wallet}\n  ${response.status} in ${seconds}s\n\n`);
 row('status', body.status);
 row(
+  'source',
+  c.source === 'index' ? 'swap index — no RPC spent, whole window covered' : 'live chain crawl',
+);
+row(
   'window read',
   daysRead === null
     ? `— of ${c.lookbackDays} days asked for`
