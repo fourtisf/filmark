@@ -130,6 +130,93 @@ export class WalletCoverageRepository {
   }
 }
 
+/** A wallet somebody asked about that the live path could not answer properly. */
+export interface WalletIndexRequest {
+  readonly wallet: string;
+  /** Days of history the requester wants covered. */
+  readonly days: number;
+  /** Why it was asked for, from a fixed set the API defines. */
+  readonly reason: string;
+  readonly requestedAt: number;
+}
+
+/**
+ * Wallets waiting to be paid for once, so the next visit is answered in a query.
+ *
+ * There is no claim, no lease and no status column, because there is nothing to
+ * lock: a backfill is idempotent, `wallet_coverage` already records what has
+ * been paid for, and the outstanding work is exactly the requests that coverage
+ * does not yet satisfy. That is a join, and it survives a worker crashing
+ * mid-job, restarting, or running twice — none of which a hand-rolled state
+ * machine over ClickHouse would.
+ */
+export class WalletIndexRequestRepository {
+  constructor(private readonly client: ClickHouseClient) {}
+
+  /** Records a wallet as wanted. Re-asking supersedes rather than duplicates. */
+  async request(request: Omit<WalletIndexRequest, 'requestedAt'>): Promise<void> {
+    try {
+      await this.client.insert({
+        table: 'wallet_index_requests',
+        values: [{ wallet: request.wallet, days: request.days, reason: request.reason }],
+        format: 'JSONEachRow',
+      });
+    } catch (error) {
+      throw new StorageError(`failed to request an index of ${request.wallet}`, {
+        cause: error,
+        context: { wallet: request.wallet },
+      });
+    }
+  }
+
+  /**
+   * Requests the index does not already satisfy, oldest ask first.
+   *
+   * `stalenessSec` is what counts as current: a wallet covered up to yesterday
+   * knows nothing about today's trades, so it is outstanding again rather than
+   * done forever. Oldest first because somebody has been waiting longest for
+   * it, and because a wallet that keeps failing does not starve the queue
+   * behind it — it is one row, not one per visitor.
+   */
+  async pending(options: { limit: number; stalenessSec: number }): Promise<WalletIndexRequest[]> {
+    const result = await this.client.query({
+      query: `
+        SELECT
+          r.wallet                        AS wallet,
+          r.days                          AS days,
+          r.reason                        AS reason,
+          toUnixTimestamp(r.requested_at) AS requested_at
+        FROM wallet_index_requests r FINAL
+        LEFT JOIN wallet_coverage c FINAL ON c.wallet = r.wallet
+        WHERE
+          -- Never covered at all, or not as far back as this request wants,
+          -- or covered once and now out of date.
+          c.wallet = ''
+          OR toUnixTimestamp(c.from_ts) > now() - r.days * 86400
+          OR toUnixTimestamp(c.to_ts) < now() - {staleness:UInt32}
+        ORDER BY r.requested_at
+        LIMIT {limit:UInt32}
+      `,
+      query_params: { limit: options.limit, staleness: options.stalenessSec },
+      format: 'JSONEachRow',
+    });
+
+    const rows = await result.json<{
+      wallet: string;
+      days: string | number;
+      reason: string;
+      requested_at: number;
+    }>();
+
+    return rows.map((row) => ({
+      wallet: row.wallet,
+      days: Number(row.days),
+      reason: row.reason,
+      requestedAt: row.requested_at,
+    }));
+  }
+}
+
 /** The SOL/USD minute series backing quote-leg pricing. */
 export class SolUsdRepository {
   constructor(private readonly client: ClickHouseClient) {}

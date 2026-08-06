@@ -122,6 +122,32 @@ const configSchema = z.object({
    * `coverage.source` says which happened.
    */
   API_USE_INDEX: booleanish.default(false),
+  /**
+   * Days of history the API asks for when it queues a wallet for a deep read.
+   *
+   * Larger than `TRACE_LOOKBACK_DAYS` on purpose, and that is the whole point:
+   * the lookback exists because a live crawl has a web request to fit inside,
+   * and a backfill has nothing waiting on it. Asking for the same narrow window
+   * the crawl already failed to answer with would queue work that changes
+   * nothing.
+   */
+  INDEX_REQUEST_DAYS: positiveInt.default(365),
+  /**
+   * How often the ingest worker looks for wallets the API has asked about.
+   *
+   * The queue is a table, not a socket, so this is a poll. Frequent enough that
+   * somebody who was told "come back in a few minutes" is not lied to, rare
+   * enough to be invisible next to the crawl it triggers.
+   */
+  INDEX_REQUEST_POLL_MS: positiveInt.default(30_000),
+  /**
+   * How current an indexed wallet has to be before its request counts as done.
+   *
+   * A backfill from last week knows nothing about this week's trades, so a
+   * covered wallet becomes outstanding again once it is this stale rather than
+   * being finished forever.
+   */
+  INDEX_REQUEST_STALENESS_SEC: positiveInt.default(86_400),
 
   /**
    * How far back a trace reads a wallet's history. Spec §8 assumes 90 days.

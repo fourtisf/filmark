@@ -2,12 +2,14 @@ import { createLogger, requireRpcUrl, type Config, type Logger } from '@exitliqu
 import {
   SwapRepository,
   WalletCoverageRepository,
+  WalletIndexRequestRepository,
   clickHouseOptionsFromConfig,
   createClickHouseClient,
 } from '@exitliquidity/clickhouse';
 import { PythClient } from '@exitliquidity/pricing';
 import { SolanaRpcClient } from '@exitliquidity/solana';
 import { ResultCache, Semaphore } from './cache.js';
+import { ClickHouseIndexRequester } from './index-request.js';
 import { ClickHouseWalletSource } from './index-source.js';
 import { createApiMetrics, type ApiMetrics } from './metrics.js';
 import { TokenMetadataResolver } from './metadata.js';
@@ -89,14 +91,31 @@ export function createServices(config: Config): ApiServices {
    * answer for a wallet no backfill has covered, so switching it on cannot make
    * a trace narrower — only cheaper.
    */
-  const index = config.API_USE_INDEX
+  const store = config.API_USE_INDEX
     ? (() => {
         const clickhouse = createClickHouseClient(clickHouseOptionsFromConfig(config));
-        return new ClickHouseWalletSource({
-          swaps: new SwapRepository(clickhouse),
-          coverage: new WalletCoverageRepository(clickhouse),
-          logger,
-        });
+        return {
+          index: new ClickHouseWalletSource({
+            swaps: new SwapRepository(clickhouse),
+            coverage: new WalletCoverageRepository(clickhouse),
+            logger,
+          }),
+          /*
+           * The other half of the same switch, and the half that makes it
+           * self-filling.
+           *
+           * An index nobody populates answers for nothing, and populating it by
+           * hand is a command per wallet on a server — which is exactly the
+           * ritual this exists to remove. A trace the chain could not answer
+           * properly now asks for that wallet to be read out of band, and the
+           * ingest worker drains those requests.
+           */
+          requests: new ClickHouseIndexRequester({
+            repository: new WalletIndexRequestRepository(clickhouse),
+            days: config.INDEX_REQUEST_DAYS,
+            logger,
+          }),
+        };
       })()
     : undefined;
 
@@ -110,7 +129,7 @@ export function createServices(config: Config): ApiServices {
     },
     // Read per trace, not captured: the series grows as traces warm it.
     priceSeries: () => prices.seriesRange,
-    ...(index === undefined ? {} : { index }),
+    ...(store === undefined ? {} : { index: store.index, indexRequests: store.requests }),
     logger,
   });
 
@@ -124,7 +143,7 @@ export function createServices(config: Config): ApiServices {
     semaphore: new Semaphore({ limit: config.API_MAX_CONCURRENT_TRACES }),
     metrics: createApiMetrics(),
     prices,
-    indexed: index !== undefined,
+    indexed: store !== undefined,
     rpcEndpoint: rpc.endpoint,
     corsOrigins: parseOrigins(config.API_CORS_ORIGINS),
   };

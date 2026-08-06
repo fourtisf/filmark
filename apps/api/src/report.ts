@@ -170,6 +170,20 @@ export interface TraceCoverage {
   readonly stoppedOnTimeBudget: boolean;
   /** Signatures reached but never fetched, because the clock ran out first. */
   readonly transactionsUnread: number;
+  /**
+   * True when this trace queued a full read of the wallet, out of band.
+   *
+   * A live crawl is one `getTransaction` per signature inside a web request,
+   * and for an active wallet's year that arithmetic does not close at any
+   * setting. When a trace was shaped by a budget rather than by the wallet, the
+   * finding is turned into a request for a backfill — which has no browser
+   * waiting on it — and the next trace is answered from the index.
+   *
+   * Only true when the request was actually recorded. The page tells the
+   * visitor to come back, and a promise nobody wrote down would be a claim the
+   * data does not support (§7.1).
+   */
+  readonly deepReadRequested: boolean;
   /** Losing positions found. Always measured. */
   readonly losingPositions: number;
   /**

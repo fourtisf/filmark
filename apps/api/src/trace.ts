@@ -23,6 +23,7 @@ import {
   type Position,
   type PositionBuyLeg,
 } from '@exitliquidity/positions';
+import type { WalletIndexRequester } from './index-request.js';
 import type { IndexedWalletSource } from './index-source.js';
 import type { TokenMetadataResolver } from './metadata.js';
 import {
@@ -78,6 +79,15 @@ export interface TraceServiceOptions {
    * report says which of the two did.
    */
   readonly index?: IndexedWalletSource;
+  /**
+   * Told when a trace was shaped by a budget rather than by the wallet.
+   *
+   * The live crawl cannot read an active wallet's year inside a web request —
+   * that is arithmetic, not tuning. Rather than leave the visitor at a dead end
+   * that says the history is unreadable, the same finding becomes a request to
+   * read it properly out of band, and the next visit is answered in a query.
+   */
+  readonly indexRequests?: WalletIndexRequester;
   readonly logger?: Logger;
 }
 
@@ -113,6 +123,7 @@ export class TraceService {
   readonly #netting: NettingOptions;
   readonly #priceSeries: TraceServiceOptions['priceSeries'];
   readonly #index: IndexedWalletSource | undefined;
+  readonly #indexRequests: WalletIndexRequester | undefined;
   readonly #logger: Logger;
 
   constructor(options: TraceServiceOptions) {
@@ -122,6 +133,7 @@ export class TraceService {
     this.#netting = options.netting ?? {};
     this.#priceSeries = options.priceSeries;
     this.#index = options.index;
+    this.#indexRequests = options.indexRequests;
     this.#logger = options.logger ?? silentLogger;
   }
 
@@ -131,6 +143,31 @@ export class TraceService {
    * bounded only by the caller's own timeout — which returns nothing at all.
    */
   async trace(wallet: string, signal?: AbortSignal, deadline?: Deadline): Promise<TraceReport> {
+    const report = await this.#compute(wallet, signal, deadline);
+    if (this.#indexRequests === undefined) return report;
+
+    /*
+     * A dead end becomes a request.
+     *
+     * Awaited rather than fired and forgotten, because the note below tells the
+     * visitor their wallet is being read properly — and a promise nobody wrote
+     * down is exactly the finding §7.1 forbids. The requester bounds its own
+     * wait and answers false rather than throwing, so the worst case is this
+     * trace returning unchanged.
+     */
+    if (!(await this.#indexRequests.request(report))) return report;
+
+    return {
+      ...report,
+      coverage: { ...report.coverage, deepReadRequested: true },
+      notes: [
+        ...report.notes,
+        'This wallet has been queued for a full read, which runs without a browser waiting on it and so is not bound by the budgets above. Trace it again in a few minutes and the answer comes from the index rather than from as much of the chain as a request had time for.',
+      ],
+    };
+  }
+
+  async #compute(wallet: string, signal?: AbortSignal, deadline?: Deadline): Promise<TraceReport> {
     const startedAt = Date.now();
     const walletDeadline =
       deadline === undefined
@@ -465,6 +502,8 @@ export class TraceService {
       crawlStoppedAt: scan.stoppedAt,
       stoppedOnTimeBudget: scan.stoppedOnTime,
       transactionsUnread: scan.transactionsUnread,
+      // Set by `trace` only once a request has actually been recorded.
+      deepReadRequested: false,
       tokenSymbolsAvailable: this.#metadata.supported,
       ...measured,
     };
