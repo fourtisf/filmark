@@ -178,20 +178,39 @@ It reports its limits on us the same way it will on you.
 
 ---
 
-## 3 · Launch-day single post
+## 3 · The single post
 
-For anyone who will not read five posts.
+If only one thing ships, ship this. Paste it as written and replace the CA.
 
 ```
-$FILL is live. {CONTRACT}
+$FILL is live.
 
-It unlocks Pro on Fillmark: paste a wallet, see every position you closed in
-the red and the wallets that were selling into it.
+CA: {CONTRACT ADDRESS}
 
-The tool works whether or not you hold the token. Try it first.
+Unlocks Pro on Fillmark — Solana counterparty forensics. Paste a wallet, see the
+positions you closed in the red and who was selling into them.
 
-fillmark.xyz
+Works whether or not you hold it. Try it first: fillmark.xyz
 ```
+
+**270 characters** with a 43-character Solana address in it, so it fits the free
+280 limit and needs no Premium to post whole. Attach `x-post-1.png` or
+`x-banner-d.png`.
+
+Three things it is doing, none of them accidental:
+
+- **CA on its own line, third.** It is the one string somebody will copy, and a
+  contract address buried mid-sentence gets copied with a word attached to it.
+  Above the pitch, not below, because the people who scroll past the pitch are
+  the ones who came for the address.
+- **"Works whether or not you hold it."** The strongest sentence available and
+  the one every other launch post cannot write. It says the product is not a
+  wrapper around the token, which is the single question a burned reader is
+  actually asking.
+- **"Try it first"** rather than "buy". The call to action points at the tool,
+  so the reader's next click costs them nothing and shows them something
+  working. Nobody has ever been talked into a token by a post; they are talked
+  into it by the thing it unlocks.
 
 ---
 
