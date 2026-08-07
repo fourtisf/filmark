@@ -34,11 +34,15 @@
      and leave this page a week old with nobody the wiser. -->
 <meta name="fillmark:build" content="">
 
-<!-- The token's contract address, written in at build time by
-     scripts/build-site.mjs from FILLMARK_TOKEN_CA. Empty is the correct state
-     before launch: the page then says "coming soon" and the copy button is not
-     rendered at all, rather than offering a control that copies a promise. -->
-<meta name="fillmark:ca" content="">
+<!-- The token's contract address.
+     Committed rather than left to FILLMARK_TOKEN_CA, which still overrides it.
+     The API url is a build input because it differs per deployment; a mint has
+     exactly one correct value for the rest of its life, is public, and is not a
+     secret — so the only thing an env var adds here is a flag somebody has to
+     remember on every deploy, and one forgotten flag publishes "coming soon"
+     over a token that launched. Empty was the right default until there was an
+     address. There is one now. -->
+<meta name="fillmark:ca" content="8gW1gRbAzTp2ftHQYsefckCu24JA1PAqm1MuuyK6pump">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

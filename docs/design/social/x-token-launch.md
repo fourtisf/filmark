@@ -1,7 +1,7 @@
 # Token launch copy
 
-Ticker is `$FILL` — the reasoning is below. Everything still in `{BRACES}` is a
-fact only you have: contract, supply, venue, date, and the distribution numbers.
+Ticker is `$FILL` — the reasoning is below. The contract is live and filled in below. Everything still in `{BRACES}` is a
+fact only you have: supply, venue, date, and the distribution numbers.
 Those are the things a reader acts on with money, and inventing any of them to
 make a draft read smoothly is the one kind of filler that costs somebody else.
 
@@ -101,7 +101,7 @@ is a different conversation from arriving at a chart.
 **2/1 — what it is** · `x-post-1.png`
 
 ```
-$FILL is live: {CONTRACT}
+$FILL is live: 8gW1gRbAzTp2ftHQYsefckCu24JA1PAqm1MuuyK6pump
 
 It is the access key to Fillmark — Solana counterparty forensics. Paste a
 wallet, and every position you closed in the red is netted against the
@@ -158,7 +158,7 @@ Terms, so nobody has to ask:
 → Liquidity {LP_AMOUNT}, {LOCKED_UNTIL}
 → No presale, no allocation, no private round   ← only if true
 
-{CONTRACT}
+8gW1gRbAzTp2ftHQYsefckCu24JA1PAqm1MuuyK6pump
 
 Verify all of it on-chain before you believe any of it.
 ```
@@ -180,12 +180,12 @@ It reports its limits on us the same way it will on you.
 
 ## 3 · The single post
 
-If only one thing ships, ship this. Paste it as written and replace the CA.
+If only one thing ships, ship this. Paste it exactly as written.
 
 ```
 $FILL is live.
 
-CA: {CONTRACT ADDRESS}
+CA: 8gW1gRbAzTp2ftHQYsefckCu24JA1PAqm1MuuyK6pump
 
 Unlocks Pro on Fillmark — Solana counterparty forensics. Paste a wallet, see the
 positions you closed in the red and who was selling into them.
@@ -193,8 +193,8 @@ positions you closed in the red and who was selling into them.
 Works whether or not you hold it. Try it first: fillmark.xyz
 ```
 
-**270 characters** with a 43-character Solana address in it, so it fits the free
-280 limit and needs no Premium to post whole. Attach `x-post-1.png` or
+**271 characters** with the real address in it, so it fits the free 280 limit
+and needs no Premium to post whole. Attach `x-post-1.png` or
 `x-banner-d.png`.
 
 Three things it is doing, none of them accidental:
