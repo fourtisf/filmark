@@ -41,10 +41,16 @@ ROOT="$(grep -hoE '^[[:space:]]*root[[:space:]]+[^;]+' "$VHOST" | head -1 | awk 
 SERVER="$(grep -hoE '^[[:space:]]*server_name[[:space:]]+[^;]+' "$VHOST" | head -1 | awk '{print $2}')"
 [ -n "$SERVER" ] || fail "no server_name in $VHOST"
 API_URL="${FILLMARK_API_URL:-https://$SERVER/api}"
-printf '   root       %s\n   server     %s\n   api        %s\n' "$ROOT" "$SERVER" "$API_URL"
+# The token's mint, when there is one. Passed through explicitly rather than
+# relied on to leak from the environment, and reported either way: "coming soon"
+# is a legitimate state, but it has to be a state somebody chose rather than a
+# variable that was silently not set on the one deploy that mattered.
+TOKEN_CA="${FILLMARK_TOKEN_CA:-}"
+printf '   root       %s\n   server     %s\n   api        %s\n   $FILL CA   %s\n' \
+  "$ROOT" "$SERVER" "$API_URL" "${TOKEN_CA:-not set — the page will say coming soon}"
 
 step "Publishing the console"
-FILLMARK_API_URL="$API_URL" node scripts/build-site.mjs >/dev/null
+FILLMARK_API_URL="$API_URL" FILLMARK_TOKEN_CA="$TOKEN_CA" node scripts/build-site.mjs >/dev/null
 cp -a "$REPO/dist/." "$ROOT"/
 
 step "Restarting the API"
