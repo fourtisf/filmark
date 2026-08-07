@@ -275,12 +275,11 @@ a.card:hover .card-go{color:var(--wh)}
 .close h2{font-size:clamp(30px,4.8vw,54px);letter-spacing:-.045em;line-height:1;
   font-weight:700;font-variation-settings:'wdth' 104;max-width:580px}
 .close h2 u{text-decoration:none;color:var(--rd)}
-/* The contract address strip. Sits directly above the footer and shares its
-   rule, so it reads as part of the page's closing block rather than as a banner
-   bolted onto it. `word-break` because a Solana address is 44 characters and
-   has to wrap on a phone rather than push the page sideways. */
-.ca{margin-top:86px;padding:22px 0;border-top:1px solid var(--ln);
-  display:flex;align-items:center;gap:16px 20px;flex-wrap:wrap;
+/* The contract address strip, in the hero under the trace box.
+   `word-break` because a Solana address is 44 characters and has to wrap on a
+   phone rather than push the page sideways. */
+.ca{margin-top:26px;padding:16px 18px;border:1px solid var(--ln);background:var(--s1);
+  display:inline-flex;align-items:center;gap:14px 18px;flex-wrap:wrap;max-width:620px;
   font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
   color:var(--g3)}
 .ca-v{font-size:12.5px;letter-spacing:0;text-transform:none;color:var(--wh);
@@ -294,7 +293,6 @@ a.card:hover .card-go{color:var(--wh)}
   transition:border-color .18s,color .18s}
 .ca-c:hover{border-color:var(--g3);color:var(--wh)}
 .ca-c[data-done="1"]{border-color:var(--rd);color:var(--rd)}
-.ca + footer{margin-top:0;border-top:none}
 
 footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
   display:flex;justify-content:space-between;gap:18px 32px;flex-wrap:wrap;
@@ -341,6 +339,7 @@ footer a:hover{color:var(--wh)}
       <a href="/extractors/" class="desk">Index</a>
       <a href="#method" class="desk">Method</a>
       <a href="#pricing" class="desk">Pricing</a>
+      <a href="https://x.com/FillMarkXyz" class="desk" rel="me noopener">X</a>
     </div>
     <a class="btn" href="/app/">Trace a wallet</a>
   </div>
@@ -392,6 +391,19 @@ footer a:hover{color:var(--wh)}
       <button class="chip" type="button" data-fill="4BnvKp7sRtY2xQmLd9WcEuZa5HgJ3oVfHa7Z">4Bnv…Ha7Z</button>
     </div>
     <span class="field-n" id="addr-note">Three free traces a day · No wallet connect · Read-only</span>
+
+    <!-- $FILL, in the hero rather than above the footer.
+         It sat at the end of the page on the argument that the first screen
+         belongs to the product. That was right about the page and wrong about
+         the reader: this page is 7,200px tall, so "the end" is seven thousand
+         pixels of scrolling, and somebody looking for a contract address does
+         not go on a hike to find it. Under the trace box it is on the first
+         screen, after the thing the product actually does. -->
+    <div class="ca" id="ca-box">
+      <span class="ca-k">$FILL contract</span>
+      <code class="ca-v" id="ca-v">coming soon</code>
+      <button class="ca-c" id="ca-copy" type="button" hidden>Copy</button>
+    </div>
 
     <div class="cta">
       <a class="btn btn-o" href="#product">See all twelve features</a>
@@ -736,17 +748,6 @@ footer a:hover{color:var(--wh)}
     <h2>You already paid for this data.<br>You may as well <u>read it.</u></h2>
     <a class="btn btn-r" href="/app/">Trace a wallet</a>
   </section>
-
-  <!-- $FILL, above the footer rather than in the nav.
-       A contract address in the top bar is the layout of every token site that
-       has nothing else to show, and this page's first screen has to be the
-       product. Down here it is where somebody who has already read the page
-       goes looking, and it is the last thing before the links. -->
-  <div class="ca" id="ca-box">
-    <span class="ca-k">$FILL contract</span>
-    <code class="ca-v" id="ca-v">coming soon</code>
-    <button class="ca-c" id="ca-copy" type="button" hidden>Copy</button>
-  </div>
 
   <footer>
     <span>Fillmark — prototype</span>
