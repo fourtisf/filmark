@@ -1,9 +1,40 @@
 # Token launch copy
 
-Everything in `{BRACES}` is a fact only you have. They are left as blanks on
-purpose: a ticker, a supply, a venue and a date are the four things a reader
-will act on with money, and inventing any of them to make a draft read smoothly
-is the one kind of filler that costs somebody else.
+Ticker is `$FILL` — the reasoning is below. Everything still in `{BRACES}` is a
+fact only you have: contract, supply, venue, date, and the distribution numbers.
+Those are the things a reader acts on with money, and inventing any of them to
+make a draft read smoothly is the one kind of filler that costs somebody else.
+
+---
+
+## The ticker: `$FILL`
+
+**Your own wordmark already argues for it.** The lockup renders `FILL` at weight
+700 in white and `MARK` at weight 300 in grey — the brand has been emphasising
+the first half on every page since before there was a token. A ticker that is
+already the bold half of your logo needs no explaining and no redesign.
+
+It is also the right word rather than a convenient one. A *fill* is an executed
+trade, and the product's single idea is that every fill had another side. "Who
+took the other side of your fill" is the pitch, the domain name and the ticker
+in one syllable. Four letters, one pronunciation, nothing to spell out loud.
+
+**The alternatives, and why not:**
+
+- `$MARK` — the other half of the name, and in con-artist usage a *mark* is the
+  person being taken. For a product whose audience is people who were extracted
+  from, that is a joke landing on the wrong person.
+- `$EXIT` — from `@exitliquidity`, the repo's own namespace. It names the
+  problem well, but it is generic, already crowded on Solana, and it is the
+  audience's failure rather than the product's function.
+- `$FLMK` — survives any collision check and nothing else. Unpronounceable
+  tickers get typed wrong, and a mistyped ticker on a DEX is somebody buying the
+  wrong token with your name on the receipt.
+
+**Check the collision before you commit.** `$FILL` is short and short tickers
+collide; search it on a DEX aggregator and on the major Solana screeners first.
+A collision is not fatal — the contract address is what people trade — but it
+decides whether search sends people to you or to somebody else.
 
 ---
 
@@ -50,7 +81,7 @@ any of the utility language here.
 **Banner:** `x-post-1.png` or `x-banner-d.png`
 
 ```
-{TICKER} launches {DATE} on {VENUE}.
+$FILL launches {DATE} on {VENUE}.
 
 It does one thing: it holds your Pro access to Fillmark — unlimited traces,
 pre-trade checks, distribution alerts, and the API.
@@ -70,7 +101,7 @@ is a different conversation from arriving at a chart.
 **2/1 — what it is** · `x-post-1.png`
 
 ```
-{TICKER} is live: {CONTRACT}
+$FILL is live: {CONTRACT}
 
 It is the access key to Fillmark — Solana counterparty forensics. Paste a
 wallet, and every position you closed in the red is netted against the
@@ -82,9 +113,9 @@ fillmark.xyz
 **2/2 — what holding it does** · `x-post-5.png`
 
 ```
-What the token does, in full:
+What $FILL does, in full:
 
-→ Hold {AMOUNT} {TICKER} — Pro is unlocked while you hold it
+→ Hold {AMOUNT} $FILL — Pro is unlocked while you hold it
 → Unlimited traces instead of three a day
 → Pre-trade check before you enter a pool
 → Alerts when a wallet on your list starts distributing
@@ -132,6 +163,19 @@ Terms, so nobody has to ask:
 Verify all of it on-chain before you believe any of it.
 ```
 
+**2/6 — the one nobody else can post** · `x-post-3.png`
+
+Optional, and the strongest post in the thread. See section 5 for why.
+
+```
+Last: here is $FILL's own deployer wallet, traced with Fillmark.
+
+{PASTE THE REAL COVERAGE BLOCK — census, positions, attributed, unattributed,
+and whatever it could not read}
+
+It reports its limits on us the same way it will on you.
+```
+
 ---
 
 ## 3 · Launch-day single post
@@ -139,7 +183,7 @@ Verify all of it on-chain before you believe any of it.
 For anyone who will not read five posts.
 
 ```
-{TICKER} is live. {CONTRACT}
+$FILL is live. {CONTRACT}
 
 It unlocks Pro on Fillmark: paste a wallet, see every position you closed in
 the red and the wallets that were selling into it.
@@ -186,7 +230,7 @@ is worth more than five posts describing it.
 
 - **The site currently promises "no launch sequence"** on the waitlist form.
   That is about email, not about tokens, but the same people read both. If
-  {TICKER} is announced by email, that line has to change first or it becomes a
+  $FILL is announced by email, that line has to change first or it becomes a
   broken promise with a screenshot attached.
 - **The trace has to answer.** Post 2/3 and 2/4 invite people to paste an
   address. While the crawl is throttled, active wallets come back
