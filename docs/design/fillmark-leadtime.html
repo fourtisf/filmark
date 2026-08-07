@@ -71,6 +71,15 @@ h1,h2,h3{font-weight:400}
 .nav-l{display:flex;align-items:center;gap:28px;font-family:var(--mono);font-size:10.5px;
   letter-spacing:.16em;text-transform:uppercase;color:var(--g2)}
 .nav-l a:hover,.nav-l a[aria-current="page"]{color:var(--wh)}
+/* The X link, grouped with the CTA rather than dropped into `.nav-l`.
+   Every one of these pages hides that list below 900px — `.nav-l a{display:none}`
+   here, `.nav-l{display:none}` on the ranking pages — so a link put inside it is
+   present on desktop and gone on the half of the traffic that arrives from a
+   phone. Sitting beside the button, no mobile rule reaches it. */
+.nav-r{display:flex;align-items:center;gap:18px;flex:none}
+.nav-x{font-family:var(--mono);font-size:12px;letter-spacing:.1em;color:var(--g2);
+  padding:6px 4px;transition:color .18s}
+.nav-x:hover{color:var(--wh)}
 .btn{padding:11px 22px;background:var(--wh);color:var(--bk);font-weight:600;
   font-size:12.5px;display:inline-block;transition:background .18s}
 .btn:hover{background:#fff}
@@ -193,6 +202,13 @@ footer a:hover{color:var(--wh)}
   .w,.nav-in,.rule>div{padding-left:24px;padding-right:24px}
   .rule>div{grid-template-columns:repeat(2,1fr)}
   .nav-l{display:none}
+  /* The nav bar at 390px is the logo, the menu button and this group, inside
+     48px of padding. Adding the X link pushed the row 14px past the viewport
+     and the whole page scrolled sideways — so the group tightens and the CTA
+     loses the padding it does not need on a phone. */
+  .nav-r{gap:12px}
+  .nav-x{padding:6px 2px}
+  .nav-in .btn{padding:11px 15px;font-size:12px}
   .def,.meth{grid-template-columns:1fr}
   .def-r{border-left:none;border-top:1px solid var(--ln)}
   .thead{display:none}
@@ -217,9 +233,12 @@ footer a:hover{color:var(--wh)}
       <a href="/lead-time/" aria-current="page">Lead-time</a>
       <a href="/#method">Method</a>
       <a href="/#pricing">Pricing</a>
-      <a href="https://x.com/FillMarkXyz" rel="me noopener">X</a>
     </div>
-    <a class="btn" href="/app/">Trace a wallet</a>
+    <div class="nav-r">
+      <a class="nav-x" href="https://x.com/FillMarkXyz" rel="me noopener"
+        aria-label="Fillmark on X">X</a>
+      <a class="btn" href="/app/">Trace a wallet</a>
+    </div>
   </div>
 </nav>
 
