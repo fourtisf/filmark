@@ -112,7 +112,7 @@ for (const [from, to] of PAGES) {
  * nothing.
  */
 function withApiUrl(html, target) {
-  if (target === 'index.html') return withTokenCa(html);
+  if (target === 'index.html') return withBuildId(withTokenCa(html));
   if (target !== 'app/index.html') return html;
 
   const stamped = withBuildId(html);
@@ -163,7 +163,7 @@ export function buildId(html) {
 function withBuildId(html) {
   const tag = /<meta\s+name="fillmark:build"\s+content="[^"]*"\s*\/?>/i;
   if (!tag.test(html)) {
-    console.error('  app/index.html has no <meta name="fillmark:build"> to stamp');
+    console.error('  a stamped page has no <meta name="fillmark:build"> to stamp');
     process.exit(1);
   }
   return html.replace(tag, `<meta name="fillmark:build" content="${buildId(html)}">`);

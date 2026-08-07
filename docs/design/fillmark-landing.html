@@ -27,6 +27,13 @@
 
 <link rel="icon" href="/favicon.svg">
 
+<!-- A hash of this page's own source, written in at build time, so a deploy can
+     ask the live site which build it is serving. The console has carried one
+     since a stale console cost a day of being mistaken for a broken engine; the
+     landing page had none, so a deploy could verify the console, report Done,
+     and leave this page a week old with nobody the wiser. -->
+<meta name="fillmark:build" content="">
+
 <!-- The token's contract address, written in at build time by
      scripts/build-site.mjs from FILLMARK_TOKEN_CA. Empty is the correct state
      before launch: the page then says "coming soon" and the copy button is not

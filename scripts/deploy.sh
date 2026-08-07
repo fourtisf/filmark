@@ -95,16 +95,36 @@ step "Verifying what is actually live"
 # onwards, including the stale one it was there to catch. Twice a stale console
 # passed and was mistaken for a broken engine. The id is a hash of the page
 # source, so "same id" means "same bytes" and nothing else does.
-WANT="$(grep -o 'fillmark:build" content="[a-f0-9]*"' "$REPO/dist/app/index.html" |
-  head -1 | grep -o '[a-f0-9]\{6,\}')"
-[ -n "$WANT" ] || fail "the local build carries no build id — is scripts/build-site.mjs current?"
+#
+# Both stamped pages, not just the console. This step verified `/app/` alone and
+# reported Done, which is how a landing page shipped an hour after a deploy that
+# had already succeeded — the console was current, the check only ever asked
+# about the console, and nobody had a reason to doubt it. A cache-buster on the
+# request, because the thing between here and the reader is exactly what this
+# step exists to see through.
+verify() {
+  local path="$1" file="$2" label="$3" want got page
+  want="$(grep -o 'fillmark:build" content="[a-f0-9]*"' "$REPO/dist/$file" |
+    head -1 | grep -o '[a-f0-9]\{6,\}')"
+  [ -n "$want" ] || fail "$file carries no build id — is scripts/build-site.mjs current?"
 
-PAGE="$(curl -fsS "https://$SERVER/app/")" || fail "https://$SERVER/app/ did not answer"
-GOT="$(grep -o 'fillmark:build" content="[a-f0-9]*"' <<<"$PAGE" | head -1 | grep -o '[a-f0-9]\{6,\}')"
-[ "$GOT" = "$WANT" ] ||
-  fail "the site is serving build ${GOT:-<none>}, not ${WANT} — the upload to $ROOT did not take"
-grep -q "content=\"$API_URL\"" <<<"$PAGE" || fail "the live console points somewhere other than $API_URL"
-printf '   console    %s, pointed at %s\n' "$WANT" "$API_URL"
+  page="$(curl -fsS -H 'Cache-Control: no-cache' "https://$SERVER$path?v=$want")" ||
+    fail "https://$SERVER$path did not answer"
+  got="$(grep -o 'fillmark:build" content="[a-f0-9]*"' <<<"$page" | head -1 |
+    grep -o '[a-f0-9]\{6,\}')"
+  [ "$got" = "$want" ] || fail \
+    "$path is serving build ${got:-<none>}, not $want.
+   The upload to $ROOT did not take, or something in front of the origin is
+   still holding the old bytes — purge the CDN cache and run this again."
+  printf '   %-10s %s\n' "$label" "$want"
+  VERIFIED_PAGE="$page"
+}
+
+verify "/" "index.html" "landing"
+verify "/app/" "app/index.html" "console"
+grep -q "content=\"$API_URL\"" <<<"$VERIFIED_PAGE" ||
+  fail "the live console points somewhere other than $API_URL"
+printf '   %-10s %s\n' "api" "$API_URL"
 
 if [ -n "$WALLET" ]; then
   step "Tracing $WALLET"
