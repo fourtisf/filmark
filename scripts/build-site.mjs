@@ -61,6 +61,34 @@ if (API_URL !== '') {
   }
 }
 
+/**
+ * The token's contract address, written into the landing page.
+ *
+ * A build input for the same reason the API url is one: it is a value that
+ * changes once, must be identical everywhere it appears, and is exactly the
+ * kind of string that gets pasted into markup by hand and then differs by a
+ * character on one page. Unset is the correct state before launch — the page
+ * says "coming soon" and renders no copy button, rather than offering a control
+ * that copies a promise.
+ *
+ *   FILLMARK_TOKEN_CA=<mint> node scripts/build-site.mjs
+ *
+ * Validated as base58 and 32 bytes, which is the same check the API applies to
+ * a wallet before it spends an RPC call on one. A mistyped mint on a launch page
+ * is somebody buying a different token, and it is cheap to refuse here.
+ */
+const TOKEN_CA = (process.env.FILLMARK_TOKEN_CA ?? '').trim();
+if (TOKEN_CA !== '') {
+  const shaped = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(TOKEN_CA);
+  if (!shaped) {
+    console.error(
+      `FILLMARK_TOKEN_CA is not a Solana address: ${TOKEN_CA}\n` +
+        '  32 to 44 base58 characters, no 0, O, I or l.',
+    );
+    process.exit(1);
+  }
+}
+
 await rm(DIST, { recursive: true, force: true });
 await mkdir(DIST, { recursive: true });
 
@@ -84,6 +112,7 @@ for (const [from, to] of PAGES) {
  * nothing.
  */
 function withApiUrl(html, target) {
+  if (target === 'index.html') return withTokenCa(html);
   if (target !== 'app/index.html') return html;
 
   const stamped = withBuildId(html);
@@ -95,6 +124,25 @@ function withApiUrl(html, target) {
     process.exit(1);
   }
   return stamped.replace(tag, `<meta name="fillmark:api" content="${API_URL}">`);
+}
+
+/**
+ * Writes the contract address into the landing page's meta tag.
+ *
+ * Matched by name rather than by exact text, like the API tag, so reformatting
+ * the page cannot quietly stop this applying and ship a launch page still
+ * saying "coming soon" on the day it launched. Missing tag is a hard error for
+ * the same reason.
+ */
+function withTokenCa(html) {
+  if (TOKEN_CA === '') return html;
+
+  const tag = /<meta\s+name="fillmark:ca"\s+content="[^"]*"\s*\/?>/i;
+  if (!tag.test(html)) {
+    console.error('  index.html has no <meta name="fillmark:ca"> to fill in');
+    process.exit(1);
+  }
+  return html.replace(tag, `<meta name="fillmark:ca" content="${TOKEN_CA}">`);
 }
 
 /**

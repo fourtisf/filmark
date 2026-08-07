@@ -27,6 +27,12 @@
 
 <link rel="icon" href="/favicon.svg">
 
+<!-- The token's contract address, written in at build time by
+     scripts/build-site.mjs from FILLMARK_TOKEN_CA. Empty is the correct state
+     before launch: the page then says "coming soon" and the copy button is not
+     rendered at all, rather than offering a control that copies a promise. -->
+<meta name="fillmark:ca" content="">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -262,6 +268,27 @@ a.card:hover .card-go{color:var(--wh)}
 .close h2{font-size:clamp(30px,4.8vw,54px);letter-spacing:-.045em;line-height:1;
   font-weight:700;font-variation-settings:'wdth' 104;max-width:580px}
 .close h2 u{text-decoration:none;color:var(--rd)}
+/* The contract address strip. Sits directly above the footer and shares its
+   rule, so it reads as part of the page's closing block rather than as a banner
+   bolted onto it. `word-break` because a Solana address is 44 characters and
+   has to wrap on a phone rather than push the page sideways. */
+.ca{margin-top:86px;padding:22px 0;border-top:1px solid var(--ln);
+  display:flex;align-items:center;gap:16px 20px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--g3)}
+.ca-v{font-size:12.5px;letter-spacing:0;text-transform:none;color:var(--wh);
+  word-break:break-all;font-variant-numeric:tabular-nums}
+/* Before launch there is no address, so the value reads as a state rather than
+   as data — and the button beside it is not rendered at all. */
+.ca[data-state="pending"] .ca-v{color:var(--g3);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase}
+.ca-c{padding:7px 14px;border:1px solid var(--ln2);color:var(--g2);
+  font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  transition:border-color .18s,color .18s}
+.ca-c:hover{border-color:var(--g3);color:var(--wh)}
+.ca-c[data-done="1"]{border-color:var(--rd);color:var(--rd)}
+.ca + footer{margin-top:0;border-top:none}
+
 footer{margin-top:86px;padding:26px 0 76px;border-top:1px solid var(--ln);
   display:flex;justify-content:space-between;gap:18px 32px;flex-wrap:wrap;
   font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--g3)}
@@ -703,6 +730,17 @@ footer a:hover{color:var(--wh)}
     <a class="btn btn-r" href="/app/">Trace a wallet</a>
   </section>
 
+  <!-- $FILL, above the footer rather than in the nav.
+       A contract address in the top bar is the layout of every token site that
+       has nothing else to show, and this page's first screen has to be the
+       product. Down here it is where somebody who has already read the page
+       goes looking, and it is the last thing before the links. -->
+  <div class="ca" id="ca-box">
+    <span class="ca-k">$FILL contract</span>
+    <code class="ca-v" id="ca-v">coming soon</code>
+    <button class="ca-c" id="ca-copy" type="button" hidden>Copy</button>
+  </div>
+
   <footer>
     <span>Fillmark — prototype</span>
     <nav aria-label="Public pages">
@@ -710,12 +748,53 @@ footer a:hover{color:var(--wh)}
       <a href="/lead-time/">Lead-time radar</a>
       <a href="/app/">Console</a>
       <a href="#method">Method</a>
+      <a href="https://x.com/FillMarkXyz" rel="me noopener">X</a>
     </nav>
     <span>Figures on this page are illustrative</span>
   </footer>
 </div>
 
 <script>
+/* ── $FILL contract address ──
+   Read from the meta tag the build writes, so the page ships one way and the
+   address arrives without an edit to the markup.
+
+   Empty is the state before launch, and it is handled by *not rendering the
+   control*: a Copy button next to "coming soon" either copies the words
+   "coming soon" or does nothing, and both are worse than no button. The same
+   rule the console follows for a figure it did not measure — an affordance that
+   cannot do its job does not appear. */
+(()=>{
+  const box=document.getElementById("ca-box");
+  const val=document.getElementById("ca-v");
+  const btn=document.getElementById("ca-copy");
+  const ca=(document.querySelector('meta[name="fillmark:ca"]')?.content||"").trim();
+
+  if(ca===""){box.dataset.state="pending";return}
+
+  box.dataset.state="live";
+  val.textContent=ca;
+  btn.hidden=false;
+  btn.addEventListener("click",async()=>{
+    try{
+      await navigator.clipboard.writeText(ca);
+      btn.textContent="Copied";
+    }catch{
+      /* Clipboard is blocked on an insecure origin and inside some in-app
+         browsers, which is where a lot of this traffic arrives from. Select the
+         address instead so the reader can copy it by hand, rather than leaving
+         a button that silently did nothing. */
+      const range=document.createRange();
+      range.selectNodeContents(val);
+      const sel=window.getSelection();
+      sel.removeAllRanges();sel.addRange(range);
+      btn.textContent="Select and copy";
+    }
+    btn.dataset.done="1";
+    setTimeout(()=>{btn.textContent="Copy";delete btn.dataset.done},2200);
+  });
+})();
+
 /* ── mega menu ── */
 const btn=document.getElementById("mbtn"),mega=document.getElementById("mega");
 function setMenu(o){mega.classList.toggle("open",o);btn.setAttribute("aria-expanded",o)}
